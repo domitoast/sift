@@ -1,0 +1,76 @@
+spring:
+  application:
+    name: sift
+
+  # ---------------------------------------------------------------
+  # 資料庫連線
+  #
+  # 這裡是「專案裡唯一跟資料庫有關的東西」——一個網路地址。
+  # 資料庫本身跑在 Docker 容器裡，與這個專案完全分離。
+  #
+  # localhost:5432 對應 docker-compose.yml 裡的 ports 設定。
+  # 若當初把 port 改成 5433，這裡也要一起改。
+  # ---------------------------------------------------------------
+  datasource:
+    url: jdbc:postgresql://localhost:5432/sift
+    username: sift
+    password: sift_local_dev_only
+    hikari:
+      # HikariCP 是 Spring Boot 預設的連線池（connection pool）。
+      # 連線池的作用：預先建立幾條資料庫連線重複使用，
+      # 因為「建立連線」很慢（要 TCP 握手、認證），每次查詢都新建會很浪費。
+      maximum-pool-size: 10
+      # 取得連線的等待上限。超過就丟例外，而不是無限等待。
+      connection-timeout: 10000  # 10 秒
+
+  jpa:
+    hibernate:
+      # validate：啟動時只「檢查」Entity 與資料表結構是否相符，絕不自動修改資料庫。
+      #
+      # 千萬不要用 update 或 create——那會讓 Hibernate 依 Entity 自動改結構，
+      # 可能直接刪掉欄位與資料。正式環境用它是重大事故的來源。
+      # 資料庫結構一律由 Flyway 管理。
+      ddl-auto: validate
+
+    # 開發時把 Hibernate 產生的 SQL 印出來，方便理解它實際做了什麼。
+    # 第 8 天觀察 N+1 查詢問題時，這個設定是關鍵。
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+    # open-in-view 預設是 true，但應該關掉。
+    #
+    # 它會讓資料庫連線一直開著直到 HTTP 回應送出，
+    # 導致連線被長時間佔用，高流量時連線池會耗盡。
+    # 它還會讓 lazy loading 在 Controller 層意外生效，
+    # 掩蓋掉本來應該在 Service 層就發現的查詢問題。
+    open-in-view: false
+
+  flyway:
+    # 啟動時自動執行 src/main/resources/db/migration 底下尚未執行過的 migration。
+    enabled: true
+    # 若資料庫已有資料表但沒有 flyway_schema_history，
+    # 是否視為「基準版本」而非報錯。我們從空資料庫開始，設 false 較嚴謹。
+    baseline-on-migrate: false
+
+# ---------------------------------------------------------------
+# Actuator：系統健康檢查
+#
+# 只開放 health 這一個 endpoint。
+# 預設會開放不少內部資訊的 endpoint，正式環境應逐一評估後才開放。
+# ---------------------------------------------------------------
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: always   # 開發時顯示細節（含資料庫連線狀態）
+
+logging:
+  level:
+    # 顯示 Flyway 的執行過程，方便確認 migration 有沒有跑。
+    org.flywaydb: INFO
+    dev.sift: DEBUG

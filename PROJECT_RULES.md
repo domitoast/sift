@@ -1,0 +1,146 @@
+# PROJECT_RULES.md — 專案憲法
+
+> 這是專案的最高規範。任何爭議（要不要做這個功能、範圍要不要擴大）都回頭對照這份文件。
+> 修改本文件需要明確的理由，並記錄在 ADR 中。
+
+---
+
+## 1. 產品定位（Positioning Statement）
+
+> 為了**需要持續吸收技術與新聞資訊、但沒時間逐篇閱讀的個人使用者**，
+> **Sift** 是一個**內建自動內容管線的個人知識庫**，
+> 它能**定時從指定來源抓取文章、自動 dedup、產生摘要，並沉澱為可搜尋、可標註的個人知識**。
+> 不同於單純的稍後閱讀工具或筆記軟體，
+> Sift 的核心價值在於**「內容自己會進來，而且進來時已經被整理過」**。
+
+### 工程上的定位（同等重要）
+
+本專案同時是一個**學習載體**。它的技術目標是展示：
+
+**「我知道系統在真實世界會壞，而且我處理了。」**
+
+因此凡是能展現**Reliability engineering**的部分（重試、idempotency、逾時、失敗處理、可觀測性），一律不得為了趕進度而簡化。
+
+---
+
+## 2. 優先序（不可調換）
+
+1. **學習**：每一個決策我都能說出理由
+2. **履歷 / 面試**：能在面試中撐起 20 分鐘的深度問答
+3. **日常實用性**：加分項，不是主要目標
+
+> 這個順序來自 Day 0 訪談的誠實結論。第 3 項曾被反覆提及，但已確認為次要。
+
+---
+
+## 3. 範圍界線
+
+### 做（In Scope）
+
+**知識庫外殼（刻意精簡）**
+
+- 使用者註冊 / 登入（JWT + Refresh Token）
+- 文件的建立、編輯、刪除、查詢
+- 文件版本歷史與**版本衝突處理（optimistic lock）**
+- 基本全文搜尋
+- 檔案 / 附件上傳
+
+**內容管線（深度戰場，不可簡化）**
+
+- 訂閱來源管理（RSS / API endpoint）
+- 定時排程抓取
+- distributed lock（避免多實例重複執行）
+- dedup 與 idempotency
+- Retry 與 exponential backoff
+- 非同步 Task state machine（PENDING → RUNNING → SUCCESS → FAILED）
+- 外部 API timeout 控制
+- LLM 摘要產生 + 成本 / 配額控制
+- 失敗任務的 DLQ 處理
+
+**工程面**
+
+- 分層測試（Unit / Integration / Testcontainers）
+- Docker + Docker Compose
+- GitHub Actions CI
+- Flyway 資料庫版本控制
+- OpenAPI 文件
+- 結構化 Logging
+
+### 不做（Out of Scope）
+
+明確排除，**任何時候想加都要先修改本文件**：
+
+- ❌ 留言功能（純 CRUD，學習價值低）
+- ❌ 標籤管理介面（資料模型可留，不做管理 UI）
+- ❌ Workspace 成員邀請與複雜 RBAC（登入即可，權限保持簡單）
+- ❌ 進階搜尋排序演算法
+- ❌ 前端 SPA（以最小可用介面或純 API + Swagger 為主）
+- ❌ 即時協作編輯
+- ❌ 多租戶架構
+- ❌ 行動 App
+
+---
+
+## 4. Definition of Done（專案層級）
+
+### 必達（Must）
+
+- [ ] `docker compose up` 一鍵啟動完整開發環境
+- [ ] CI 綠燈（build + test 全過）
+- [ ] 核心路徑測試覆蓋率 ≥ 60%
+- [ ] 管線的可靠性行為有測試證明（重試、idempotency、失敗處理）
+- [ ] SRS、ER Diagram、API 文件、ADR 齊備
+- [ ] README 能讓陌生人在 5 分鐘內跑起來
+
+### 目標（Should）
+
+- [ ] LLM 自動產生每日內容摘要頁（digest）
+- [ ] CD pipeline：push → CI 測試 → build Docker image → 推上 container registry
+
+### 加分（Could）
+
+- [ ] 部署到雲端，有公開網址與 HTTPS
+- [ ] Prometheus + Grafana 監控儀表板
+- [ ] 完整自動部署（registry → 伺服器 → health check）
+
+> **調整紀錄**：原本 Should / Could 的內容相反，於 Day 1 依 ADR-001 對調。
+> 注意 CD 被刻意拆成兩段：build + push image 不需要伺服器，屬 Should；
+> 實際部署需要伺服器，屬 Could。這是為了避免把任務排在其前置條件之前。
+
+---
+
+## 5. 停損順序（進度落後時，由上往下砍）
+
+> 第 14 天為強制檢查點。落後即啟動本清單。
+
+1. **Prometheus / Grafana 監控儀表板** — 最先砍
+2. **雲端部署與公開網址**（改為本機 demo + 錄影）— 次之
+3. **檔案上傳功能** — 再次之
+4. **全文搜尋降級為簡單 LIKE 查詢**
+5. **LLM 每日摘要頁降級為單篇摘要 API** — 最後才動
+
+> 前兩項本來就在 Could，砍掉不影響 DoD 的 Should 層級。
+
+**永不砍（Never Cut）**
+
+- 教學深度與八點教學格式
+- 每週空手日
+- 管線的可靠性設計（重試、idempotency、狀態機）
+- 測試
+
+---
+
+## 6. 資源限制
+
+- 總時程：**21 天**
+- 每日投入：**5 小時以上**
+- 總預算工時：約 **105～120 小時**
+- 面試時間：約一個月後（時程無彈性）
+
+---
+
+## 7. 待決事項
+
+- [ ] 雲端平台與預算（Oracle Cloud Free / AWS / 是否購買網域）
+- [ ] 內容來源清單（要抓哪些 RSS / 網站）
+- [ ] 專案正式名稱（目前代號 Sift）

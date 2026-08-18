@@ -1,0 +1,58 @@
+# Sift 開發環境
+#
+# 啟動：docker compose up -d
+# 停止：docker compose down          （資料保留）
+# 停止並清空資料：docker compose down -v
+# 查看日誌：docker compose logs -f postgres
+# 進入資料庫：docker compose exec postgres psql -U sift -d sift
+
+services:
+
+  postgres:
+    # image 名稱與版本標籤。
+    # 一律鎖定明確版本（17-alpine），不要用 latest——
+    # latest 會隨時間變動，某天重建環境就換成不同版本，行為可能不一致。
+    # alpine 是精簡版 Linux，映像檔小很多（約 80MB vs 400MB）。
+    image: postgres:17-alpine
+
+    # 容器名稱。不指定的話 Docker 會自動生成像 sift-postgres-1 這種名字。
+    container_name: sift-postgres
+
+    # 容器意外停止時自動重啟，但你手動停止時不會。
+    restart: unless-stopped
+
+    environment:
+      # postgres 這個 image 支援的環境變數，啟動時會依此建立資料庫與帳號。
+      POSTGRES_DB: sift
+      POSTGRES_USER: sift
+      POSTGRES_PASSWORD: sift_local_dev_only
+      # 這組密碼只用於本機開發，不會出現在正式環境。
+      # 正式環境的密碼由部署時的環境變數注入，絕不寫死在檔案裡。
+
+    ports:
+      # 格式是「你電腦的 port : 容器裡的 port」。
+      # 5432 是 PostgreSQL 的預設 port。
+      # 如果你電腦上已經有東西佔用 5432，把左邊改成 5433 即可，
+      # 容器內部不受影響。
+      - "5432:5432"
+
+    volumes:
+      # 把容器內的資料目錄對應到一個由 Docker 管理的具名 volume。
+      # 沒有這行的話，容器一刪除，資料庫內容全部消失。
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      # 定期檢查資料庫是否真的可以接受連線。
+      # 這很重要：容器「啟動」不等於資料庫「準備好」——
+      # PostgreSQL 第一次啟動要初始化，大約需要幾秒。
+      # 之後應用程式容器可以用 depends_on + condition 等它就緒再啟動。
+      test: ["CMD-SHELL", "pg_isready -U sift -d sift"]
+      interval: 5s      # 每 5 秒檢查一次
+      timeout: 3s       # 單次檢查超過 3 秒視為失敗
+      retries: 5        # 連續失敗 5 次才標記為 unhealthy
+      start_period: 10s # 啟動後前 10 秒的失敗不計入
+
+volumes:
+  # 宣告具名 volume。實際檔案由 Docker 管理，
+  # 位置在 Docker 的內部儲存區，不在專案資料夾裡。
+  postgres_data:

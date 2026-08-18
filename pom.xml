@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+        parent：繼承 Spring Boot 的官方父專案。
+        它的作用是「幫你決定所有 Spring 相關函式庫的版本」。
+        因此下面的 dependency 都不需要寫 <version>——
+        Spring Boot 已經測過這一組版本可以互相搭配。
+        這叫 dependency management，是 Spring Boot 最實用的功能之一。
+    -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.5.0</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>dev.sift</groupId>
+    <artifactId>sift</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>sift</name>
+    <description>個人知識庫，內建自動內容管線</description>
+
+    <properties>
+        <!--
+            指定 Java 版本。
+            spring-boot-starter-parent 會把這個值轉成 maven.compiler.release=21，
+            意思是：不管你用哪個 JDK 編譯，都只准使用 Java 21 有的 API。
+            這樣就不會出現「本機能編譯、部署後炸掉」的情況。
+        -->
+        <java.version>21</java.version>
+    </properties>
+
+    <dependencies>
+
+        <!--
+            starter-web：提供 HTTP 伺服器（內嵌 Tomcat）與 REST Controller 支援。
+            「starter」是 Spring Boot 的概念——一個 starter 會一次帶進
+            一組互相搭配好的函式庫，你不用自己一個一個挑。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!--
+            starter-data-jpa：提供 JPA / Hibernate 與資料庫連線池（HikariCP）。
+            今天還沒有 Entity，但需要它來建立 DataSource 給 Flyway 使用。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+        <!--
+            actuator：提供 /actuator/health 這類「系統自我檢查」的 endpoint。
+            部署時用來讓外部確認服務是否正常，第 19 天做 health check 會用到。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!--
+            Flyway。從版本 10 起，PostgreSQL 的支援被拆成獨立模組，
+            所以需要同時引入 flyway-core 與 flyway-database-postgresql。
+            只加 core 會出現「找不到資料庫支援」的錯誤。
+        -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+
+        <!--
+            PostgreSQL 的 JDBC driver。
+            scope 是 runtime：編譯時不需要它（我們的程式碼不直接引用它的類別），
+            但執行時必須存在，否則無法連線。
+        -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!--
+            測試用函式庫（JUnit 5、AssertJ、Mockito 等一次帶進來）。
+            scope 是 test：只在跑測試時存在，不會被打包進正式的產出檔案。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+                spring-boot-maven-plugin：讓 mvn spring-boot:run 可以直接啟動，
+                並把專案打包成一個可執行的 jar（裡面已含 Tomcat）。
+            -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>
