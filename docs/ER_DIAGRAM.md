@@ -1,7 +1,7 @@
 # ER Diagram
 
 **繪製工具**：Mermaid（可直接在 GitHub、VS Code 中渲染）
-**最後更新**：Day 3
+**最後更新**：Day 5（ADR-008 精簡後）
 
 ---
 
@@ -11,7 +11,6 @@
 erDiagram
     APP_USER ||--o{ SOURCE : "訂閱"
     APP_USER ||--o{ DOCUMENT : "擁有"
-    APP_USER ||--o{ TAG : "建立"
 
     SOURCE ||--o{ FETCH_JOB : "被排程抓取"
     SOURCE ||--o{ FETCHED_ITEM : "產出"
@@ -21,19 +20,15 @@ erDiagram
     FETCHED_ITEM |o--o| DOCUMENT : "promote 為"
 
     DOCUMENT ||--o{ DOCUMENT_VERSION : "歷史版本"
-    DOCUMENT ||--o{ DOCUMENT_TAG : ""
-    TAG ||--o{ DOCUMENT_TAG : ""
 
     APP_USER {
         bigserial id PK
-        varchar email UK "唯一"
+        varchar email UK "唯一（未刪除者）"
         varchar password_hash "BCrypt，60 字元"
         text llm_api_key_encrypted "加密，可為空"
-        int daily_llm_call_count
-        date daily_llm_count_date
-        timestamptz deleted_at "soft delete"
         timestamptz created_at
         timestamptz updated_at
+        timestamptz deleted_at "soft delete"
     }
 
     SOURCE {
@@ -43,12 +38,9 @@ erDiagram
         varchar url "與 user_id 組成唯一（未刪除者）"
         varchar type "RSS / ATOM"
         boolean enabled
-        int fetch_interval_minutes
-        timestamptz last_success_at
-        int consecutive_failure_count
-        timestamptz deleted_at "soft delete"
         timestamptz created_at
         timestamptz updated_at
+        timestamptz deleted_at "soft delete"
     }
 
     FETCH_JOB {
@@ -57,11 +49,8 @@ erDiagram
         varchar status "PENDING/RUNNING/SUCCESS/FAILED"
         timestamptz started_at
         timestamptz finished_at
-        int retry_count
-        timestamptz next_retry_at
         varchar failure_type "TRANSIENT / PERMANENT"
         text failure_reason
-        int item_count
         timestamptz created_at
         timestamptz updated_at
     }
@@ -81,7 +70,6 @@ erDiagram
         varchar failure_type
         text failure_reason
         text summary
-        timestamptz summarized_at
         timestamptz promoted_at
         timestamptz created_at
         timestamptz updated_at
@@ -94,11 +82,10 @@ erDiagram
         bigint fetched_item_id FK "唯一，可為空"
         varchar title
         text content "Markdown"
-        text note "使用者對抓取內容的註解"
         bigint version "optimistic lock 用"
-        timestamptz deleted_at "soft delete"
         timestamptz created_at
         timestamptz updated_at
+        timestamptz deleted_at "soft delete"
     }
 
     DOCUMENT_VERSION {
@@ -108,20 +95,6 @@ erDiagram
         varchar title
         text content
         timestamptz created_at
-        timestamptz updated_at
-    }
-
-    TAG {
-        bigserial id PK
-        bigint user_id FK
-        varchar name "與 user_id 組成唯一"
-        timestamptz created_at
-        timestamptz updated_at
-    }
-
-    DOCUMENT_TAG {
-        bigint document_id PK_FK
-        bigint tag_id PK_FK
     }
 ```
 
@@ -141,53 +114,81 @@ Mermaid ER 圖的符號讀法：
 
 | 關聯 | 基數 | 白話 |
 |---|---|---|
-| `APP_USER → SOURCE` | 1 對多 | 一個使用者可訂閱多個來源；每個來源只屬於一個使用者 |
-| `SOURCE → FETCH_JOB` | 1 對多 | 一個來源會被排程抓取很多次，每次一筆紀錄 |
+| `APP_USER → SOURCE` | 1 對多 | 一個使用者可訂閱多個來源 |
+| `APP_USER → DOCUMENT` | 1 對多 | 一個使用者有多份文件 |
+| `SOURCE → FETCH_JOB` | 1 對多 | 一個來源會被抓取很多次，**每次一筆** |
 | `SOURCE → FETCHED_ITEM` | 1 對多 | 一個來源會產出很多篇文章 |
-| `FETCH_JOB → FETCHED_ITEM` | 1 對多 | 一次抓取可能抓到 0 到 N 篇 |
-| `FETCHED_ITEM → DOCUMENT` | **0或1 對 0或1** | 一筆 staging 項目最多 promote 成一份文件；<br>手寫文件則沒有對應的 staging 項目 |
+| `FETCH_JOB → FETCHED_ITEM` | 1 對多 | **一次抓取通常抓到數十篇** |
+| `FETCHED_ITEM → DOCUMENT` | 0或1 對 0或1 | 一筆 staging 最多晉升成一份文件；<br>手寫文件則無對應的 staging 項目 |
 | `DOCUMENT → DOCUMENT_VERSION` | 1 對多 | 一份文件有多個歷史版本 |
-| `DOCUMENT ↔ TAG` | 多對多 | 透過 `DOCUMENT_TAG` 中介表 |
+
+---
+
+## 一次抓取實際發生什麼（數量關係）
+
+這是最容易誤解的地方：
+
+```
+早上 07:00，排程觸發，抓 Hacker News
+
+fetch_job  第 1 筆          ← 「去抓 Hacker News 這個動作」
+   │
+   ├── fetched_item 第 1 筆   ← 抓到的第 1 篇文章
+   ├── fetched_item 第 2 筆
+   ├── ...
+   └── fetched_item 第 30 筆  ← 第 30 篇
+```
+
+**一次動作、三十篇文章。**
+
+因此資料量估算為：
+
+| 表 | 每天 | 一年 | 備註 |
+|---|---|---|---|
+| `fetch_job` | 來源數（例：2） | 730 筆 | 極小 |
+| `fetched_item` | 來源數 × 每源篇數（例：60） | 約 21,900 筆 | 有 30 天清除策略 |
 
 ---
 
 ## 兩層架構在圖上的位置
 
 ```
-┌──────────────── Pipeline（staging：可能失敗、可能重複）────────────────┐
-│                                                                        │
-│   SOURCE  ──→  FETCH_JOB  ──→  FETCHED_ITEM                            │
-│                                     │                                  │
-└─────────────────────────────────────┼──────────────────────────────────┘
-                                      │ promote（僅 READY 狀態可晉升）
+┌──────────── Pipeline（staging：可能失敗、可能重複）──────────────┐
+│                                                                   │
+│   SOURCE  ──→  FETCH_JOB  ──→  FETCHED_ITEM                       │
+│                                     │                             │
+└─────────────────────────────────────┼─────────────────────────────┘
+                                      │ promote（僅 READY 可晉升）
                                       ▼
-┌──────────────── Knowledge Base（curated：一律是成品）─────────────────┐
-│                                                                        │
-│   DOCUMENT  ──→  DOCUMENT_VERSION                                      │
-│      │                                                                 │
-│      └──→  DOCUMENT_TAG  ←──  TAG                                      │
-│                                                                        │
-└────────────────────────────────────────────────────────────────────────┘
+┌──────────── Knowledge Base（curated：一律是成品）────────────────┐
+│                                                                   │
+│   DOCUMENT  ──→  DOCUMENT_VERSION                                 │
+│                                                                   │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
-`FETCHED_ITEM → DOCUMENT` 這條線是整張圖唯一的跨層連結，
+`FETCHED_ITEM → DOCUMENT` 是整張圖唯一的跨層連結，
 也是 ADR-002 決策的具體體現。
 
 ---
 
 ## 為什麼 FETCHED_ITEM 同時連到 SOURCE 和 FETCH_JOB
 
-乍看之下 `source_id` 是多餘的——透過 `fetch_job_id` 就能查到 source。
+透過 `fetch_job_id` 就能查到 source，`source_id` 看似多餘。
 
-保留它的理由是**查詢效率**。
+保留它的理由是**查詢效率**：「列出某來源的所有文章」是最常見的查詢，
+若只有 `fetch_job_id`，每次都必須 join `fetch_job` 才能過濾。
 
-「列出某個來源的所有文章」是最常見的查詢。
-若只有 `fetch_job_id`，每次都必須 join `fetch_job` 才能過濾來源。
-直接保留 `source_id` 可省下這個 join。
+這是**刻意的反正規化（denormalization）**——用一點冗餘換查詢速度。
 
-這是**刻意的反正規化（denormalization）**——
-用一點冗餘換取查詢速度，是經過權衡後的選擇，而非疏漏。
+代價是寫入時必須由 Service 保證兩個欄位一致。
 
-代價是：若某筆 `fetched_item` 的 `source_id` 與其
-`fetch_job.source_id` 不一致，資料就矛盾了。
-因此寫入時必須由 Service 保證兩者一致。
+---
+
+## Day 5 移除的部分（ADR-008）
+
+原圖曾包含 `TAG` 與 `DOCUMENT_TAG` 兩張表及其多對多關聯，
+因 `PROJECT_RULES.md` 明訂不做標籤管理介面而移除——
+沒有介面即無法建立標籤，該表永遠為空。
+
+需要時以 V2 migration 加回。

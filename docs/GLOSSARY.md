@@ -61,8 +61,12 @@ Document（知識庫：乾淨成品，origin = FETCHED）
 - **英文命名**：`FetchJob`
 - **它不是什麼**：不是抓回來的內容本身，是**這次抓取這個動作的紀錄**。
 - **狀態機**：`PENDING` → `RUNNING` → `SUCCESS` / `FAILED`
-- **關鍵欄位**：所屬 Source、狀態、開始/結束時間、retry 次數、失敗原因。
+- **關鍵欄位**：所屬 Source、狀態、開始/結束時間、失敗分類、失敗原因。
 - **關鍵規則**：同一個 Source 在同一時間只能有一個 RUNNING 的 FetchJob（靠 distributed lock 保證）。
+- **數量關係**：**一次抓取動作 = 一筆 FetchJob，但通常產生數十筆 FetchedItem。**
+  這是本專案最容易誤解的數量關係。
+- **無 retry 欄位**（ADR-008）：本系統為每日排程，抓取失敗等下次排程即可。
+  分鐘級 retry 只在 FetchedItem 的 LLM 摘要上有意義。
 
 ### FetchedItem（抓取項目 / staging）
 
@@ -115,17 +119,14 @@ Document（知識庫：乾淨成品，origin = FETCHED）
   - ⚠️ 這是本專案最容易搞混的一組名詞
 - **關鍵規則**：只有 `origin = MANUAL` 的 Document 會產生版本歷史。
 
-### Tag（標籤）
+### ~~Tag（標籤）~~ / ~~Attachment（附件）~~
 
-- **定義**：附加在 Document 上的分類標記。
-- **英文命名**：`Tag`
-- **範圍限制**：資料模型會做，但**不做標籤管理介面**（見 PROJECT_RULES 的 out-of-scope）。
+**已於 Day 5 移除**（ADR-008）。
 
-### Attachment（附件）
+`PROJECT_RULES.md` 明訂不做標籤管理介面——沒有介面即無法建立標籤，
+該資料表永遠為空。需要時再以 V2 migration 加回。
 
-- **定義**：附加在 Document 上的檔案。
-- **英文命名**：`Attachment`
-- **範圍限制**：停損順序第 3 位，可能不做。
+附件功能位於停損順序第 3 位，尚未實作，因此資料模型也不預先建立。
 
 ---
 

@@ -1,0 +1,40 @@
+# =============================================================================
+# 測試專用設定
+#
+# Spring Boot 的規則：測試執行時，這個檔案會「覆蓋」
+# src/main/resources/application.yml 中同名的設定項。
+#
+# 為什麼需要它：主設定檔用 ${SIFT_JWT_SECRET} 且不給預設值，
+# 但測試不會有那些環境變數（CI 上更不會有）。
+# 沒有這份檔案，所有測試會因為「找不到環境變數」而失敗。
+#
+# ⚠️ 這裡的值是「測試專用的假值」，可以安全地進版控——
+#    它不保護任何真實資料，只是讓測試跑得起來。
+#    絕對不可以把真實金鑰放進來。
+# =============================================================================
+
+spring:
+  datasource:
+    # 測試目前仍連本機 Docker 的 PostgreSQL。
+    # ⚠️ 這是已知的技術債：測試依賴外部環境。
+    #    Day 18 會改用 Testcontainers，由測試自行啟動資料庫容器。
+    url: jdbc:postgresql://localhost:5432/sift
+    username: sift
+    password: local_dev_only_change_me
+
+  jpa:
+    # 測試時不印 SQL，否則輸出會被淹沒
+    show-sql: false
+
+sift:
+  jwt:
+    # 測試專用的假金鑰。長度仍需符合 HS512 的要求（至少 512 bits），
+    # 否則簽章時會拋出例外。
+    secret: dGVzdC1vbmx5LXNlY3JldC1rZXktZm9yLXVuaXQtdGVzdHMtbm90LWZvci1wcm9kdWN0aW9uLXVzZS1hdC1hbGwtcGFkZGluZw==
+    access-token-ttl-minutes: 15
+    refresh-token-ttl-days: 7
+
+logging:
+  level:
+    org.flywaydb: WARN
+    dev.sift: INFO

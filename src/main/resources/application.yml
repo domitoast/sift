@@ -12,9 +12,16 @@ spring:
   # 若當初把 port 改成 5433，這裡也要一起改。
   # ---------------------------------------------------------------
   datasource:
-    url: jdbc:postgresql://localhost:5432/sift
-    username: sift
-    password: sift_local_dev_only
+    # ${VAR} 讀取環境變數。冒號後面是「找不到時的預設值」。
+    #
+    # 注意 password 刻意「不給預設值」——找不到就讓啟動失敗。
+    # 這是 fail fast：寧可現在爆，也不要用一個錯誤的密碼跑起來，
+    # 然後在某個沒人注意的角落連線失敗。
+    #
+    # 帳號與資料庫名稱給預設值是可以的，它們不是機密。
+    url: jdbc:postgresql://${SIFT_DB_HOST:localhost}:${SIFT_DB_PORT:5432}/${SIFT_DB_NAME:sift}
+    username: ${SIFT_DB_USER:sift}
+    password: ${SIFT_DB_PASSWORD}
     hikari:
       # HikariCP 是 Spring Boot 預設的連線池（connection pool）。
       # 連線池的作用：預先建立幾條資料庫連線重複使用，
@@ -74,3 +81,21 @@ logging:
     # 顯示 Flyway 的執行過程，方便確認 migration 有沒有跑。
     org.flywaydb: INFO
     dev.sift: DEBUG
+
+# ---------------------------------------------------------------
+# 本應用程式自訂的設定
+#
+# 這一區不是 Spring 定義的，是我們自己的。
+# 會由 dev.sift.config.JwtProperties 讀取成型別安全的物件。
+# ---------------------------------------------------------------
+sift:
+  jwt:
+    # ⚠️ 不給預設值。找不到就啟動失敗。
+    #
+    # 若給了預設值（例如 "default-secret"），最糟的情況是：
+    # 部署到正式環境時忘了設環境變數，系統照樣啟動，
+    # 而且用一把所有人都知道的鑰匙在簽發 token。
+    # 這種錯誤不會有任何警告，直到被入侵才發現。
+    secret: ${SIFT_JWT_SECRET}
+    access-token-ttl-minutes: ${SIFT_JWT_ACCESS_TTL_MINUTES:15}
+    refresh-token-ttl-days: ${SIFT_JWT_REFRESH_TTL_DAYS:7}

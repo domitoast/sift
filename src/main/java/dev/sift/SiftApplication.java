@@ -2,6 +2,7 @@ package dev.sift;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 
 /**
  * Sift 應用程式的進入點。
@@ -25,6 +26,16 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * 會出現「明明加了 @Service 卻找不到 Bean」的問題。
  */
 @SpringBootApplication
+/*
+ * @ConfigurationPropertiesScan：掃描標了 @ConfigurationProperties 的類別
+ * 並註冊成 Bean。
+ *
+ * 沒有這行的話，JwtProperties 不會被建立，注入時會找不到。
+ * 另一種寫法是在某個 @Configuration 類別上標
+ * @EnableConfigurationProperties(JwtProperties.class)，
+ * 但那需要逐一列舉，之後每加一個設定類別都要改。
+ */
+@ConfigurationPropertiesScan
 public class SiftApplication {
 
     public static void main(String[] args) {

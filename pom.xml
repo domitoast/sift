@@ -66,6 +66,78 @@
         </dependency>
 
         <!--
+            starter-validation：提供 @NotBlank、@Email、@Size 這類驗證註解，
+            以及背後的 Hibernate Validator 實作。
+
+            ⚠️ 從 Spring Boot 2.3 起，validation 不再包含在 starter-web 裡，
+            必須自己加。很多舊教學沒提到這件事，是常見的踩雷點。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!--
+            starter-security：完整的 Spring Security。
+            Day 5 時只用了 spring-security-crypto（單純的雜湊函式），
+            Day 6 需要 filter chain 與認證機制，因此換成完整版。
+
+            ⚠️ 這是一個 starter，加入後會觸發 auto-configuration：
+               所有 endpoint 立刻變成需要認證。
+               必須同時提供自己的 SecurityFilterChain Bean 才能覆蓋預設行為。
+               （@ConditionalOnMissingBean 使我們的定義優先）
+
+            spring-security-crypto 會被它傳遞依賴帶進來，
+            所以 BCryptPasswordEncoder 仍然可用，不需要另外宣告。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
+        <!--
+            JJWT：Java 的 JWT 函式庫，負責產生與驗證 token。
+
+            拆成三個 artifact 是刻意的設計：
+              jjwt-api     — 介面，編譯時需要
+              jjwt-impl    — 實作，只有執行時需要（scope: runtime）
+              jjwt-jackson — 用 Jackson 處理 JSON（scope: runtime）
+
+            這樣拆的好處：你的程式碼只能引用 api 裡的類別，
+            無法意外依賴實作細節。日後換實作不會影響你的程式碼。
+
+            ⚠️ 版本必須自己指定——spring-boot-starter-parent
+               只管理 Spring 生態系的版本，第三方函式庫不在其中。
+        -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+            <version>0.12.6</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <version>0.12.6</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <version>0.12.6</version>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!--
+            測試 Spring Security 的輔助工具，
+            例如模擬「已登入的使用者」發送請求。
+        -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
             Flyway。從版本 10 起，PostgreSQL 的支援被拆成獨立模組，
             所以需要同時引入 flyway-core 與 flyway-database-postgresql。
             只加 core 會出現「找不到資料庫支援」的錯誤。

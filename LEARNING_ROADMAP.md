@@ -6,7 +6,7 @@
 > - 🟢 能自己寫出來
 > - ⭐ 能講清楚為什麼，並說出替代方案與取捨
 
-**最後更新**：Day 3
+**最後更新**：Day 5
 
 ---
 
@@ -34,56 +34,79 @@
 | ER 圖的關聯基數 | 🟡 | `\|\|`＝恰好一個、`o{`＝零或多、`\|o`＝零或一 |
 | IDOR / Broken Access Control | 🟢 | 把 `user_id` 放進查詢條件，而非查出來再比對。<br>OWASP Top 10 第一名 |
 | Secure by construction | 🟢 | 把安全規則做成「不可能忘記」的形式，<br>而非「記得要做」的形式。Repository 只提供 `findByIdAndUserId` |
+| CHECK constraint | 🟢 | 自訂條件，不符合就拒絕寫入。已親手驗證過小寫 `rss` 被擋下 |
+| Database trigger | 🟢 | 某事發生時資料庫自動執行一段程式。已親手驗證 `updated_at` 自動更新 |
+| Invariant 下推到資料層 | 🟢 | 不變條件放在資料庫，所有路徑都躲不掉；<br>放在程式碼則會被新的 endpoint 繞過 |
+| TIMESTAMPTZ 與 UTC | 🟢 | 一律以 UTC 儲存，顯示時才轉當地時間。<br>用不帶時區的型別，機房搬遷後資料無法救回 |
+| Walking skeleton | 🟡 | 先讓最小但完整的系統跑通，再往上長肉 |
+| Connection pool | 🟡 | 預先建立幾條資料庫連線重複使用，避免每次查詢都重新握手 |
+| Dependency management | 🟡 | `spring-boot-starter-parent` 統一決定版本，避免函式庫互相衝突 |
+| Docker 的兩種用途 | 🟢 | 開發時「拿別人做好的 image 來用」；<br>部署時「把自己的程式打包成 image」。多數人只知道後者 |
+| 分層架構的職責 | 🟡 | Controller 只接請求、Service 放邏輯、Repository 只存取。<br>DTO 與 Entity 不是「層」，是層與層之間傳遞的資料 |
+| DTO 存在的理由 | 🟢 | 直接回傳 Entity 會把 passwordHash 一起送出去。<br>DTO 是「預設不外洩」，`@JsonIgnore` 是「記得要排除」 |
+| 在邊界正規化資料 | 🟢 | 驗證發生在 Controller 之前，所以清理必須更早。<br>由整合測試發現的設計缺陷 |
+| Defence in depth | 🟢 | 程式檢查給友善訊息，資料庫約束才是保證。<br>DTO 與 Service 都做正規化也是同一思路 |
+| Mock 與可測試性 | 🟡 | 能把 Repository 換成假的，是因為當初用了建構子注入 |
+| 測試「沒做某件事」 | 🟡 | `verify(repo, never()).save(any())`——<br>少了它，「先存再丟例外」的錯誤寫法也會通過測試<br>⚠️ Day 5 抽問答錯，降級。Day 7 空手日重測 |
+| 誰守得住哪一側？ | 🟡 | Java↔資料庫：`ddl-auto: validate` 與 Spring Data 在**啟動時**就爆<br>Java↔JSON：**只有整合測試**。框架完全不把關<br>⚠️ Day 5 抽問答錯（選了「編譯不過」），需重測 |
 
 ---
 
 ## 進度總覽
 
-| 分類 | 項目數 | 已達 🟢 以上 |
-|---|---|---|
-| Spring Boot 核心 | 10 | 0 |
-| 資料層 | 7 | 0 |
-| Reliability engineering（深度戰場） | 8 | 0 |
-| 安全 | 5 | 0 |
-| 測試 | 5 | 0 |
-| 基礎設施 | 6 | 0 |
+| 分類 | 項目數 | 🟡 以上 | 🟢 以上 |
+|---|---|---|---|
+| Spring Boot 核心 | 10 | 7 | 1 |
+| 資料層 | 7 | 3 | 0 |
+| Reliability engineering（深度戰場） | 8 | 2 | 0 |
+| 安全 | 5 | 1 | 1 |
+| 測試 | 5 | 3 | 0 |
+| 基礎設施 | 6 | 2 | 1 |
+
+> **Day 5 現況**：Spring Boot 核心已大量接觸但多停在 🟡（看得懂，沒自己寫）。
+> **深度戰場（C 類）幾乎沒動**——那是 Day 11–16 的主場。
+> Day 7 空手日的驗證重點：A3（分層架構）、A4（DTO）、B1（JPA）。
 
 ---
 
 ## A. Spring Boot 核心
 
 ### A1. Dependency Injection / IoC 容器
-- **掌握度**：⬜
+- **掌握度**：🟡（已教學，尚未實際使用）
 - **核心概念**：物件不自己 new 依賴，由容器注入
 - **本專案用途**：所有 Service、Repository 的組裝
 - **常見錯誤**：用欄位注入而非建構子注入；循環依賴
 - **面試考點**：為什麼要 DI？建構子注入 vs 欄位注入的差別？
 
 ### A2. Bean 與生命週期
-- **掌握度**：⬜
+- **掌握度**：🟡（已看過 @Service / @Bean / @Configuration 的實例）
 - **核心概念**：由 Spring 容器管理的物件
 - **常見錯誤**：以為每次拿到的都是新物件（預設是 singleton）
 - **面試考點**：Bean scope 有哪些？singleton 有什麼陷阱？
 
 ### A3. 分層架構（Controller / Service / Repository）
-- **掌握度**：⬜
+- **掌握度**：🟡（已完整走過一輪，但尚未自己寫）
 - **常見錯誤**：業務邏輯寫在 Controller；Service 直接回傳 Entity
 
 ### A4. DTO vs Entity
-- **掌握度**：⬜
+- **掌握度**：🟢（能說出為什麼不能直接回傳 Entity）
 - **面試考點**：為什麼不直接回傳 Entity？
 
 ### A5. Validation（Bean Validation）
-- **掌握度**：⬜
+- **掌握度**：🟡
+- **關鍵**：沒有 `@Valid` 就完全不會生效，且不會有任何警告
+- **順序**：Jackson 建物件 → 驗證 → Controller。清理資料必須更早
 
 ### A6. 全域例外處理（@ControllerAdvice）
-- **掌握度**：⬜
+- **掌握度**：🟡
+- **關鍵**：`Exception.class` 的 fallback 必須存在，且不可把堆疊回傳給客戶端
 
 ### A7. Configuration & Profiles
 - **掌握度**：⬜
 
 ### A8. @Transactional 與 transaction 邊界
-- **掌握度**：⬜
+- **掌握度**：🟡（已使用，尚未遇到 rollback 情境）
+- **邊界放 Service**：Repository 太細、Controller 太粗
 - **面試考點**：傳播行為有哪些？為什麼同類內部呼叫會失效？
 - **⚠️ 本專案重點**
 
@@ -100,7 +123,9 @@
 ## B. 資料層
 
 ### B1. JPA / Hibernate 基礎
-- **掌握度**：⬜
+- **掌握度**：🟡
+- **機制**：靠 reflection 建立「Java 欄位 ↔ 資料表欄位」對照表，**按名字對應，順序無關**
+- **JPA 是規範，Hibernate 是實作**
 
 ### B2. 實體關聯映射（一對多、多對多）
 - **掌握度**：⬜
@@ -125,7 +150,11 @@
 - **面試考點**：你為什麼加這個索引？加了索引為什麼寫入會變慢？
 
 ### B7. Flyway 資料庫版本控制
-- **掌握度**：⬜
+- **掌握度**：🟡（已看過完整 migration 並成功執行，尚未自己從零寫）
+- **核心概念**：讓資料庫結構變成可以進 Git 的東西
+- **鐵律**：檔案一經執行即為唯讀，要改就寫新的一份（checksum 會擋）
+- **常見錯誤**：檔名用一個底線（必須兩個）；用 `ddl-auto: update` 取代 migration
+- **面試考點**：你們怎麼管理資料庫變更？
 
 ---
 
@@ -179,7 +208,10 @@
 - **面試考點**：為什麼需要兩個 token？refresh token 被偷怎麼辦？
 
 ### D4. 密碼雜湊（BCrypt）
-- **掌握度**：⬜
+- **掌握度**：🟢
+- **核心**：雜湊不可逆；BCrypt 刻意很慢（cost factor 10 ≈ 100ms）；自動加 salt
+- **輸出格式**：`$2a$10$<22字元salt><31字元hash>`，共 60 字元
+- **面試考點**：為什麼不用 MD5/SHA-256？（太快，方便暴力破解）
 
 ### D5. 常見漏洞防護（SQL Injection / XSS / CSRF）
 - **掌握度**：⬜
@@ -189,14 +221,15 @@
 ## E. 測試
 
 ### E1. 單元測試（JUnit 5）
-- **掌握度**：⬜
+- **掌握度**：🟡
 
 ### E2. Mockito
-- **掌握度**：⬜
+- **掌握度**：🟡
+- **ArgumentCaptor**：攔截傳給 save() 的物件，檢查實際要寫入的內容
 - **常見錯誤**：mock 太多，測到的是 mock 不是邏輯
 
 ### E3. Spring Boot Test 分層
-- **掌握度**：⬜
+- **掌握度**：🟡（單元 50ms vs 整合 5s；MockMvc 模擬 HTTP 不開 port）
 
 ### E4. Testcontainers
 - **掌握度**：⬜
@@ -211,13 +244,19 @@
 ## F. 基礎設施
 
 ### F1. Docker 基礎
-- **掌握度**：⬜
+- **掌握度**：🟢
+- **核心概念**：image 是模板，container 是執行中的實例
+- **關鍵**：資料要用 volume 保存，否則容器一刪就沒
+- **常見錯誤**：以為容器是虛擬機；用 `latest` 標籤導致版本漂移
+- **面試考點**：你怎麼用 Docker？（能區分「開發時用現成 image」與「部署時打包自己的程式」是關鍵）
 
 ### F2. Dockerfile 最佳化（多階段建置）
 - **掌握度**：⬜
 
 ### F3. Docker Compose
-- **掌握度**：⬜
+- **掌握度**：🟡（已成功啟動並操作，但檔案不是自己寫的）
+- **核心概念**：用一個 YAML 描述多個容器怎麼一起跑
+- **關鍵設定**：鎖版本（不用 latest）、volume（保資料）、healthcheck（等就緒）
 
 ### F4. GitHub Actions
 - **掌握度**：⬜

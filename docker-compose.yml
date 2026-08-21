@@ -23,11 +23,15 @@ services:
 
     environment:
       # postgres 這個 image 支援的環境變數，啟動時會依此建立資料庫與帳號。
-      POSTGRES_DB: sift
-      POSTGRES_USER: sift
-      POSTGRES_PASSWORD: sift_local_dev_only
-      # 這組密碼只用於本機開發，不會出現在正式環境。
-      # 正式環境的密碼由部署時的環境變數注入，絕不寫死在檔案裡。
+      #
+      # ${...} 的值來自同目錄的 .env 檔——docker compose 會自動讀取它，
+      # 不需要任何額外設定或外掛。
+      #
+      # 冒號後面沒有預設值，代表「.env 裡沒設就報錯」。
+      # 這是刻意的：寧可啟動失敗，也不要偷偷用一個弱密碼跑起來。
+      POSTGRES_DB: ${SIFT_DB_NAME:?SIFT_DB_NAME 未設定，請複製 .env.example 為 .env}
+      POSTGRES_USER: ${SIFT_DB_USER:?SIFT_DB_USER 未設定}
+      POSTGRES_PASSWORD: ${SIFT_DB_PASSWORD:?SIFT_DB_PASSWORD 未設定}
 
     ports:
       # 格式是「你電腦的 port : 容器裡的 port」。
@@ -46,7 +50,11 @@ services:
       # 這很重要：容器「啟動」不等於資料庫「準備好」——
       # PostgreSQL 第一次啟動要初始化，大約需要幾秒。
       # 之後應用程式容器可以用 depends_on + condition 等它就緒再啟動。
-      test: ["CMD-SHELL", "pg_isready -U sift -d sift"]
+      # 注意 $$ 的寫法：compose 看到 $$ 會還原成單一個 $ 再交給容器，
+      # 因此這個變數是在「容器內部」求值的。
+      # 容器內存在的是 POSTGRES_USER / POSTGRES_DB（上面 environment 設的），
+      # 而不是 SIFT_ 開頭那些——那些只存在於你的電腦上。
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s      # 每 5 秒檢查一次
       timeout: 3s       # 單次檢查超過 3 秒視為失敗
       retries: 5        # 連續失敗 5 次才標記為 unhealthy

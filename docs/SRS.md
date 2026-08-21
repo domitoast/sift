@@ -162,7 +162,8 @@
 | FR-3.1 | 系統應依排程自動對所有啟用中的 Source 執行抓取 |
 | FR-3.2 | 多實例環境下，同一次排程只能有一個實例執行（distributed lock） |
 | FR-3.3 | 系統應以 content hash 進行 dedup，重複內容不建立新的 FetchedItem |
-| FR-3.4 | 暫時性失敗應以 exponential backoff 自動 retry，最多 N 次 |
+| FR-3.4 | **LLM 摘要**的暫時性失敗應以 exponential backoff 自動 retry，最多 3 次（ADR-008） |
+| FR-3.4a | **來源抓取**失敗不做當日 retry，等待下次排程；但必須記錄失敗分類與原因 |
 | FR-3.5 | 永久性失敗不應 retry |
 | FR-3.6 | 超過最大 retry 次數的項目應進入 DLQ，可被查詢 |
 | FR-3.7 | 所有外部呼叫皆須設定 timeout |
@@ -183,7 +184,7 @@
 | FR-4.2 | Document 內容以 Markdown 儲存 |
 | FR-4.3 | 修改 `origin = MANUAL` 的 Document 時應建立 DocumentVersion 快照 |
 | FR-4.4 | 更新 Document 應使用 optimistic lock，衝突時回傳 409 |
-| FR-4.5 | `origin = FETCHED` 的 Document 其原文內容不可修改，但可加註解 |
+| ~~FR-4.5~~ | **已移除（ADR-008）**。`note` 欄位刪除後，兩種 origin 的文件皆可自由編輯 `content`，行為一致。原文追溯改由 `fetched_item.raw_content` 提供（30 天內） |
 | FR-4.6 | User 可依關鍵字搜尋自己的 Document |
 | FR-4.7 | User 只能存取屬於自己的 Document 與 Source |
 
