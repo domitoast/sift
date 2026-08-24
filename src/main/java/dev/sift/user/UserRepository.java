@@ -40,6 +40,28 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByEmailAndDeletedAtIsNull(String email);
 
     /**
+     * 依 id 查詢未刪除的使用者。
+     *
+     * <p>方法名稱會被解析成：
+     * {@code SELECT * FROM app_user WHERE id = ? AND deleted_at IS NULL}
+     *
+     * <p><b>為什麼不直接用內建的 {@code findById(id)}</b>：
+     * 那個方法是 JpaRepository 內建的通用查詢，
+     * 它不知道本專案有 soft delete，會把已刪除的資料一起撈出來。
+     *
+     * <p>差別在於「過濾發生在哪一側」：
+     * <ul>
+     *   <li>此方法 — <b>資料庫直接不回傳</b>那一列</li>
+     *   <li>{@code findById(id)} 之後在 Java 判斷 — 撈回來再丟掉</li>
+     * </ul>
+     * 單筆查詢兩者差異可忽略，但同樣的選擇套用在清單查詢時
+     * （例如「列出我的所有文件」）差距會很明顯。
+     *
+     * <p><b>原則：能在資料庫過濾掉的，就不要撈回來再過濾。</b>
+     */
+    Optional<User> findByIdAndDeletedAtIsNull(Long id);
+
+    /**
      * 檢查該 email 是否已被使用（未刪除者）。
      *
      * <p>產生的 SQL 只做存在性檢查，不會把整筆資料撈回來，

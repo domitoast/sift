@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Locale;
+import java.util.Optional;
 
 /**
  * 使用者相關的業務邏輯。
@@ -120,19 +121,37 @@ public class UserService {
     }
 
     /**
-     * 依 id 查詢使用者。
+     * 依 id 查詢使用者，供 {@code GET /api/v1/me} 使用。
      *
-     * <p>{@code readOnly = true} 告訴資料庫與 Hibernate 這是唯讀交易：
-     * Hibernate 會跳過「髒資料檢查」（dirty checking，即比對物件有無被修改），
-     * 減少記憶體與 CPU 開銷。
+     * <p>{@code readOnly = true} 告訴 Hibernate 這是唯讀交易，
+     * 可跳過 dirty checking（比對物件有沒有被改過），省下記憶體與 CPU。
+     * <b>慣例：所有查詢方法都標 readOnly = true。</b>
      *
-     * <p>習慣是：<b>所有查詢方法都標 readOnly = true</b>。
+     * <p>使用 {@code findByIdAndDeletedAtIsNull} 而非內建的 {@code findById}，
+     * 讓 soft delete 的過濾發生在資料庫端。
+     *
+     * @throws UserNotFoundException 查無此人，或該帳號已被刪除
      */
     @Transactional(readOnly = true)
     public UserResponse findById(Long id) {
-        return userRepository.findById(id)
-                .filter(user -> !user.isDeleted())
-                .map(UserResponse::from)
-                .orElseThrow(() -> new IllegalArgumentException("使用者不存在"));
+
+        Optional<User> found = userRepository.findByIdAndDeletedAtIsNull(id);
+
+        if (found.isEmpty()) {
+            /*
+             * 何時會走到這裡？
+             *
+             * token 有效代表簽發當下這個人是存在的，
+             * 但在 token 的 15 分鐘有效期內帳號可能已被刪除。
+             *
+             * 這是一個「罕見但必須處理」的情況——
+             * 不處理的話會是 NoSuchElementException，最後變成 500。
+             */
+            throw new UserNotFoundException();
+        }
+
+        User user = found.get();
+
+        return UserResponse.from(user);
     }
 }

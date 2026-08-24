@@ -1,0 +1,45 @@
+# =============================================================================
+# 測試專用設定（profile: test）
+#
+# 【為什麼檔名是 application-test.yml 而不是 application.yml】
+#
+# 兩個檔案若都叫 application.yml，classpath 上只會找到「第一個」——
+# 而 test-classes 排在 classes 之前，因此 src/main 的那份「完全不會被載入」。
+#
+# 那不是覆蓋，是「遮蔽」。結果是測試環境與正式環境跑在兩套不同的設定上，
+# 而且沒有任何警告。
+#
+# 這個問題在 Day 9 被一個測試抓到：
+# 主設定寫了 max-page-size: 100，但測試量到的是 Spring 預設的 2000。
+#
+# 改名為 application-test.yml 並搭配 @ActiveProfiles("test") 之後，
+# Spring 會「先載入 application.yml，再用這份疊上去」——
+# 也就是真正的覆蓋。這份檔案因此只需要列出「與正式環境不同」的部分。
+#
+# ⚠️ 這裡的值是測試專用的假值，可以安全進版控。絕不可放真實金鑰。
+# =============================================================================
+
+spring:
+  datasource:
+    # 測試目前仍連本機 Docker 的 PostgreSQL。
+    # ⚠️ 已知技術債：測試依賴外部環境。Day 18 改用 Testcontainers。
+    url: jdbc:postgresql://localhost:5432/sift
+    username: sift
+    password: local_dev_only_change_me
+
+  jpa:
+    # 測試時不印 SQL，否則輸出會被淹沒。
+    #
+    # 其餘 JPA 設定（ddl-auto、open-in-view）刻意「不」重寫，
+    # 直接沿用 application.yml——設定不一致的測試，測不到真實行為。
+    show-sql: false
+
+sift:
+  jwt:
+    # 測試專用的假金鑰。長度仍需符合 HS512 要求（至少 512 bits）。
+    secret: dGVzdC1vbmx5LXNlY3JldC1rZXktZm9yLXVuaXQtdGVzdHMtbm90LWZvci1wcm9kdWN0aW9uLXVzZS1hdC1hbGwtcGFkZGluZw==
+
+logging:
+  level:
+    org.flywaydb: WARN
+    dev.sift: INFO

@@ -4,7 +4,76 @@
 **基底路徑**：`/api/v1`
 **認證**：Bearer token（JWT）置於 `Authorization` 標頭
 **內容型別**：`application/json`
-**最後更新**：Day 3
+**最後更新**：Day 10
+
+---
+
+## ⚠️ 這份文件是「設計」，不是「現況」
+
+**這裡描述的是 27 支 endpoint 的完整規劃，其中大部分尚未實作。**
+
+**要知道「現在有哪些 API 真的能用」，看 [`PROJECT_STATE.md`](PROJECT_STATE.md)。**
+
+兩份文件的職責不同，不要互相取代：
+
+| 文件 | 回答的問題 |
+|---|---|
+| 本文件 | 這個系統**將來**應該長什麼樣 |
+| `PROJECT_STATE.md` | 這個系統**現在**是什麼樣 |
+
+### 已實作的部分（Day 10）
+
+| Method | 路徑 | 狀態 |
+|---|---|---|
+| POST | `/api/v1/auth/register` | ✅ |
+| POST | `/api/v1/auth/login` | ✅ 回傳 access + refresh 兩張票 |
+| POST | `/api/v1/auth/refresh` | ✅ 含 rotation 與重複使用偵測（ADR-011） |
+| POST | `/api/v1/auth/logout` | ✅ 回 204，且為 idempotent |
+| GET | `/api/v1/me` | ✅ |
+| POST | `/api/v1/documents` | ✅ |
+| GET | `/api/v1/documents` | ✅ **分頁**，見下方格式 |
+| GET | `/api/v1/documents/{id}` | ✅ |
+| DELETE | `/api/v1/documents/{id}` | ✅ soft delete |
+
+**其餘 18 支尚未實作。**
+
+### 與 Day 3 設計的落差
+
+**一、分頁回應格式（Day 9 新增，原設計未涵蓋）**
+
+所有回傳清單的 endpoint 一律分頁，格式如下：
+
+```json
+{
+  "content": [ ... ],
+  "page": 0,
+  "size": 20,
+  "totalElements": 137,
+  "totalPages": 7,
+  "hasNext": true
+}
+```
+
+- 查詢參數：`?page=0&size=20&sort=createdAt,desc`
+- **`size` 上限 100**，超過會被限制（防止「分頁等於不存在」）
+- 列表回傳**精簡欄位**，不含 `content`。要全文請取單篇
+
+**二、`/auth/refresh` 的實際行為（原設計未描述）**
+
+- 換發成功時**同時給出新的 refresh token**，舊的立即作廢（rotation）
+- 若使用一張已被換掉的 refresh token → 判定盜用 →
+  **該使用者所有憑證全部作廢**，回 401
+- 四種失敗情況（查無、過期、已撤銷、盜用）**回應完全相同**，
+  不讓呼叫端從差異中推敲資訊
+
+**三、`/auth/logout` 永遠回 204**
+
+即使 token 早就無效。理由：idempotent，且不洩漏 token 有效性。
+
+**四、`POST /api/v1/auth/register` 的路徑有疑慮**
+
+「建立使用者」是 user 領域的操作，RESTful 的寫法應為 `POST /api/v1/users`。
+目前保留原路徑，待決定是否變更（本專案無外部使用者，變更成本為零）。
 
 ---
 

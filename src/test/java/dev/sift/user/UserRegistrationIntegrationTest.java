@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.transaction.TestTransaction;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,10 +34,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>{@code @Transactional} 讓每個測試方法跑完自動 rollback，
  * 因此測試不會在開發用的資料庫留下垃圾資料。
  */
+@ActiveProfiles("test")
 @SpringBootTest
 @AutoConfigureMockMvc
 @Transactional
-class AuthControllerIntegrationTest {
+class UserRegistrationIntegrationTest {
 
     /**
      * MockMvc 讓我們在測試中模擬 HTTP 請求，

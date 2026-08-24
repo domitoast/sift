@@ -36,3 +36,9 @@ application-local.yaml
 # 若日後改用 Gradle
 .gradle/
 build/
+
+# 手動測試 API 時用的暫存 payload（curl -d "@xxx.json"）
+#
+# 這些檔案裡會有真實的 token 與密碼，絕對不可進版控。
+# 需要長期保留的請求範例，請放到 docs/ 並改用假值。
+/*.json

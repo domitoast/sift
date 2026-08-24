@@ -54,6 +54,23 @@ spring:
     # 掩蓋掉本來應該在 Service 層就發現的查詢問題。
     open-in-view: false
 
+  # ---------------------------------------------------------------
+  # 分頁的預設值與上限
+  #
+  # max-page-size 是必要的防護：
+  # 沒有它，任何人送 ?size=999999999 就等於要求「回傳全部」，
+  # 分頁形同不存在。Spring 的預設上限是 2000，對本專案仍然太大。
+  #
+  # one-indexed-parameters 保持 false（預設）：
+  # 第一頁是 page=0。改成 true 會讓程式碼與 API 的頁碼定義不一致，
+  # 反而更容易搞混。
+  # ---------------------------------------------------------------
+  data:
+    web:
+      pageable:
+        default-page-size: 20
+        max-page-size: 100
+
   flyway:
     # 啟動時自動執行 src/main/resources/db/migration 底下尚未執行過的 migration。
     enabled: true

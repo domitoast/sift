@@ -4,7 +4,52 @@
 **命名慣例**：資料表與欄位一律 `snake_case`、資料表用**單數**
 **主鍵**：`BIGSERIAL`（自動遞增數字）
 **時間欄位**：一律 `TIMESTAMPTZ`（含時區），以 UTC 儲存
-**最後更新**：Day 5（ADR-008 精簡後）
+**最後更新**：Day 10
+
+---
+
+## 現行 migration 一覽
+
+| 檔案 | 內容 |
+|---|---|
+| `V1__init.sql` | 6 張業務表（Day 4） |
+| `V2__add_refresh_token.sql` | `refresh_token` 表（Day 6） |
+| `V3__add_refresh_token_rotation.sql` | 加 `previous_token_hash`（Day 8，ADR-011） |
+| `V4__use_varchar_for_token_hash.sql` | `CHAR(64)` → `VARCHAR(64)`（Day 8，修正 V2/V3） |
+
+> V2、V3 的型別錯誤刻意留在歷史裡。
+> **已執行的 migration 不能修改**，只能往後新增一份——V4 就是那份。
+
+## `refresh_token`（V2 建立，V3/V4 修改）
+
+| 欄位 | 型別 | 說明 |
+|---|---|---|
+| `id` | `BIGSERIAL` | 主鍵 |
+| `user_id` | `BIGINT NOT NULL` | 擁有者，FK → `app_user`，`ON DELETE RESTRICT` |
+| `token_hash` | `VARCHAR(64) NOT NULL` | 目前有效 token 的 SHA-256 雜湊。**不存 token 本身** |
+| `previous_token_hash` | `VARCHAR(64)` | 上一代的雜湊。**盜用偵測用**（ADR-011） |
+| `expires_at` | `TIMESTAMPTZ NOT NULL` | 絕對到期時間，**rotation 不會延長它** |
+| `revoked_at` | `TIMESTAMPTZ` | 撤銷時間。登出、盜用偵測、登出所有裝置都會填 |
+| `created_at` | `TIMESTAMPTZ NOT NULL` | `DEFAULT now()` |
+
+**索引**：
+
+| 索引 | 服務哪個查詢 |
+|---|---|
+| `uq_refresh_token_hash`（UNIQUE） | 正常換發：依 `token_hash` 查 |
+| `idx_refresh_token_previous_hash`（partial，非 NULL 才進） | 盜用偵測：依 `previous_token_hash` 查 |
+| `idx_refresh_token_user_active`（partial，未撤銷才進） | 作廢某使用者的所有憑證 |
+| `idx_refresh_token_expires` | 未來的過期清除排程（Day 12） |
+
+**一列 = 一個裝置的一次登入。** 同一使用者可同時有多列，
+因此手機登出不會影響筆電。rotation 採原地更新，不新增列（ADR-011）。
+
+### 待辦
+
+- [ ] 過期紀錄的清除排程（Day 12）
+- [ ] 已撤銷紀錄保留 24 小時後刪除
+
+---
 
 > **欄位存在的三個判準**（ADR-008）
 > 1. 現在有哪個 FR / User Story 需要它？
