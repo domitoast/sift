@@ -19,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -251,6 +252,259 @@ class DocumentFlowIntegrationTest {
         mockMvc.perform(delete("/api/v1/documents/1")).andExpect(status().isUnauthorized());
     }
 
+    // ---------- 13–16：編輯與 optimistic lock ----------
+
+    @Test
+    @DisplayName("13. 編輯自己的文件 → 200，version 遞增")
+    void update_shouldSucceedAndIncrementVersion() throws Exception {
+
+        long id = createDocument(ownerToken, "原標題", "原內容");
+
+        mockMvc.perform(put("/api/v1/documents/" + id)
+                        .header("Authorization", "Bearer " + ownerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"新標題","content":"新內容","version":0}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("新標題"))
+                /*
+                 * 這一條斷言就是在保護 Service 裡那行 flush()。
+                 *
+                 * 少了 flush，回應會帶著更新前的 version（0），
+                 * 使用者拿著它再送一次就會收到 409——而那個「別人」是他自己。
+                 */
+                .andExpect(jsonPath("$.version").value(1));
+    }
+
+    @Test
+    @DisplayName("14. ★ 帶著過期的 version 編輯 → 409，且回報目前版本")
+    void update_withStaleVersion_shouldReturnConflict() throws Exception {
+
+        long id = createDocument(ownerToken, "會議記錄", "1. 預算");
+
+        // 同事先儲存（他讀到的是 version 0）
+        mockMvc.perform(put("/api/v1/documents/" + id)
+                        .header("Authorization", "Bearer " + ownerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"會議記錄","content":"1. 預算 / 2. 時程","version":0}
+                                """))
+                .andExpect(status().isOk());
+
+        // 我後儲存，但手上還是 version 0——我沒看到同事的修改
+        mockMvc.perform(put("/api/v1/documents/" + id)
+                        .header("Authorization", "Bearer " + ownerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"會議記錄","content":"1. 預算 / 3. 人力","version":0}
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.currentVersion").value(1));
+    }
+
+    @Test
+    @DisplayName("15. 衝突發生時，先寫入者的內容必須完好無損")
+    void update_whenConflict_shouldNotOverwrite() throws Exception {
+
+        long id = createDocument(ownerToken, "會議記錄", "1. 預算");
+
+        mockMvc.perform(put("/api/v1/documents/" + id)
+                        .header("Authorization", "Bearer " + ownerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"會議記錄","content":"1. 預算 / 2. 時程","version":0}
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(put("/api/v1/documents/" + id)
+                        .header("Authorization", "Bearer " + ownerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"會議記錄","content":"1. 預算 / 3. 人力","version":0}
+                                """))
+                .andExpect(status().isConflict());
+
+        /*
+         * 光是回 409 不夠——要確認資料「真的沒被覆蓋」。
+         *
+         * 這與測試 8（刪別人的文件）是同一個原則：
+         * 「他被拒絕」和「東西真的沒事」是兩件事。
+         */
+        mockMvc.perform(get("/api/v1/documents/" + id)
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content").value("1. 預算 / 2. 時程"))
+                .andExpect(jsonPath("$.version").value(1));
+    }
+
+    @Test
+    @DisplayName("16. 編輯別人的文件 → 404（版本正確也不行）")
+    void update_otherUsersDocument_shouldReturnNotFound() throws Exception {
+
+        long id = createDocument(ownerToken, "別人動不了", "內容");
+
+        mockMvc.perform(put("/api/v1/documents/" + id)
+                        .header("Authorization", "Bearer " + otherToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"被竄改","content":"被竄改","version":0}
+                                """))
+                .andExpect(status().isNotFound());
+
+        // 確認原文完好
+        mockMvc.perform(get("/api/v1/documents/" + id)
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(jsonPath("$.title").value("別人動不了"));
+    }
+
+    @Test
+    @DisplayName("17. 編輯時未提供 version → 400（不能繞過衝突偵測）")
+    void update_withoutVersion_shouldReturnBadRequest() throws Exception {
+
+        long id = createDocument(ownerToken, "標題", "內容");
+
+        mockMvc.perform(put("/api/v1/documents/" + id)
+                        .header("Authorization", "Bearer " + ownerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"新標題","content":"新內容"}
+                                """))
+                .andExpect(status().isBadRequest());
+    }
+
+    // ---------- 18–24：版本歷史 ----------
+
+    @Test
+    @DisplayName("18. 建立文件後就有第 1 版，內容 = 建立時的內容")
+    void create_shouldCreateInitialVersion() throws Exception {
+
+        long id = createDocument(ownerToken, "週會", "1. 預算");
+
+        mockMvc.perform(get("/api/v1/documents/" + id + "/versions")
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].versionNumber").value(1))
+                .andExpect(jsonPath("$[0].title").value("週會"))
+                // 列表不含內文
+                .andExpect(jsonPath("$[0].content").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("19. 編輯後版本歷史變成兩筆，最新的在前")
+    void update_shouldAppendVersion() throws Exception {
+
+        long id = createDocument(ownerToken, "週會", "1. 預算");
+        updateDocument(ownerToken, id, "週會記錄", "1. 預算 / 2. 時程", 0);
+
+        mockMvc.perform(get("/api/v1/documents/" + id + "/versions")
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].versionNumber").value(2))
+                .andExpect(jsonPath("$[1].versionNumber").value(1));
+    }
+
+    @Test
+    @DisplayName("20. ★ 舊版本保留的是「當時」的內容，不是現在的")
+    void getVersion_shouldReturnSnapshotAtThatTime() throws Exception {
+
+        long id = createDocument(ownerToken, "週會", "1. 預算");
+        updateDocument(ownerToken, id, "週會記錄", "1. 預算 / 2. 時程", 0);
+
+        mockMvc.perform(get("/api/v1/documents/" + id + "/versions/1")
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("週會"))
+                .andExpect(jsonPath("$.content").value("1. 預算"));
+
+        // 對照組：文件本身已經是新的
+        mockMvc.perform(get("/api/v1/documents/" + id)
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(jsonPath("$.title").value("週會記錄"));
+    }
+
+    @Test
+    @DisplayName("21. 別人看不到你的版本歷史與單一版本 → 404")
+    void versions_ofOtherUsersDocument_shouldReturnNotFound() throws Exception {
+
+        long id = createDocument(ownerToken, "機密", "不該被看到");
+
+        mockMvc.perform(get("/api/v1/documents/" + id + "/versions")
+                        .header("Authorization", "Bearer " + otherToken))
+                .andExpect(status().isNotFound());
+
+        mockMvc.perform(get("/api/v1/documents/" + id + "/versions/1")
+                        .header("Authorization", "Bearer " + otherToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("22. 查不存在的版本號 → 404")
+    void getVersion_withUnknownNumber_shouldReturnNotFound() throws Exception {
+
+        long id = createDocument(ownerToken, "標題", "內容");
+
+        mockMvc.perform(get("/api/v1/documents/" + id + "/versions/99")
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("23. 文件被刪除後，版本歷史也查不到 → 404")
+    void versions_afterDocumentDeleted_shouldReturnNotFound() throws Exception {
+
+        long id = createDocument(ownerToken, "要刪掉的", "內容");
+
+        mockMvc.perform(delete("/api/v1/documents/" + id)
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isNoContent());
+
+        /*
+         * 權限檢查先於版本查詢：requireOwnedDocument 用的是
+         * findByIdAndUserIdAndDeletedAtIsNull，已刪除的文件查不到，
+         * 所以連帶查不到它的版本——不需要在版本這一層寫任何額外判斷。
+         */
+        mockMvc.perform(get("/api/v1/documents/" + id + "/versions")
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("24. ★ 版本數超過 20 之後會被修剪，最舊的真的被刪掉")
+    void versions_shouldBePrunedToLimit() throws Exception {
+
+        long id = createDocument(ownerToken, "初版", "內容 0");
+
+        /*
+         * 編輯 20 次 → 版本歷史 = 1（初版）+ 20 = 21 版 → 修剪後剩 20 版。
+         *
+         * 每次帶的 version 是 document 的 optimistic lock 計數器，
+         * 從 0 開始每次 +1，與 version_number（從 1 開始）差一。
+         */
+        for (int i = 0; i < 20; i++) {
+            updateDocument(ownerToken, id, "第 " + (i + 1) + " 次", "內容 " + (i + 1), i);
+        }
+
+        mockMvc.perform(get("/api/v1/documents/" + id + "/versions")
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(20))
+                .andExpect(jsonPath("$[0].versionNumber").value(21))
+                .andExpect(jsonPath("$[19].versionNumber").value(2));
+
+        /*
+         * 光是「剩 20 筆」不夠——要確認第 1 版「真的被刪掉」。
+         *
+         * 若修剪的減法差一，可能剩下的是 1..20 而不是 2..21，
+         * 上面的斷言會過，但這一條不會。
+         */
+        mockMvc.perform(get("/api/v1/documents/" + id + "/versions/1")
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isNotFound());
+    }
+
     // ---------- 輔助方法 ----------
 
     private String registerAndLogin(String email) throws Exception {
@@ -283,6 +537,18 @@ class DocumentFlowIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
 
         return objectMapper.readTree(body).get("id").asLong();
+    }
+
+    private void updateDocument(String token, long id, String title, String content, int version)
+            throws Exception {
+
+        mockMvc.perform(put("/api/v1/documents/" + id)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"title":"%s","content":"%s","version":%d}
+                                """.formatted(title, content, version)))
+                .andExpect(status().isOk());
     }
 
     private long totalElements(String token) throws Exception {

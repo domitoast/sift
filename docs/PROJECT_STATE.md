@@ -22,6 +22,11 @@
 | POST | `/api/v1/auth/refresh` | ❌ | 換發（含 rotation 與盜用偵測） | 200 + 新的一對 |
 | POST | `/api/v1/auth/logout` | ❌ | 作廢該張 refresh token | **204** |
 | GET | `/api/v1/me` | ✅ | 當前登入者資料 | 200 + `UserResponse` |
+| POST | `/api/v1/documents` | ✅ | 建立文件 | 201 + Location |
+| GET | `/api/v1/documents` | ✅ | 列表（分頁，預設 20 筆、上限 100） | 200 + `PageResponse` |
+| GET | `/api/v1/documents/{id}` | ✅ | 讀單篇 | 200 |
+| PUT | `/api/v1/documents/{id}` | ✅ | 編輯（**需帶 version，衝突回 409**） | 200 |
+| DELETE | `/api/v1/documents/{id}` | ✅ | soft delete | **204** |
 | GET | `/actuator/health` | ❌ | 健康檢查 | 200 |
 
 **其他所有路徑一律 401。**

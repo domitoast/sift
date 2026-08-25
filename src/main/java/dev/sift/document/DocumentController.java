@@ -4,6 +4,8 @@ import dev.sift.common.PageResponse;
 import dev.sift.document.dto.CreateDocumentRequest;
 import dev.sift.document.dto.DocumentResponse;
 import dev.sift.document.dto.DocumentSummaryResponse;
+import dev.sift.document.dto.DocumentVersionResponse;
+import dev.sift.document.dto.DocumentVersionSummaryResponse;
 import dev.sift.document.dto.UpdateDocumentRequest;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Pageable;
@@ -21,6 +23,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URI;
+import java.util.List;
 
 /**
  * 文件的 HTTP 入口。
@@ -113,6 +116,40 @@ public class DocumentController {
             @Valid @RequestBody UpdateDocumentRequest request) {
 
         return documentService.update(userId, id, request);
+    }
+
+    /**
+     * 列出某篇文件的版本歷史，最新的在前。
+     *
+     * <p><b>沒有分頁</b>——版本數上限固定為 20，是「答得出最多幾筆」的清單。
+     * 回傳清單的 API 該不該分頁，判斷標準是「答不答得出上限」，不是「有沒有清單」。
+     *
+     * <p>回應不含內文。要看某一版的內容請打下一支 API。
+     */
+    @GetMapping("/{id}/versions")
+    public List<DocumentVersionSummaryResponse> listVersions(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long id) {
+
+        return documentService.findVersions(userId, id);
+    }
+
+    /**
+     * 讀取某篇文件的指定版本（含內文）。
+     *
+     * <p>網址裡有兩個變數：{@code /documents/5/versions/2} →
+     * {@code id=5}、{@code versionNumber=2}。
+     *
+     * <p>版本不存在（含已被修剪掉的舊版本）→ 404，
+     * 與「文件不是你的」共用同一個回應。
+     */
+    @GetMapping("/{id}/versions/{versionNumber}")
+    public DocumentVersionResponse getVersion(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long id,
+            @PathVariable Integer versionNumber) {
+
+        return documentService.findVersion(userId, id, versionNumber);
     }
 
     /**
