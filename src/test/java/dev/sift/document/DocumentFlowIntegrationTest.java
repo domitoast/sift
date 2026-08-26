@@ -505,6 +505,80 @@ class DocumentFlowIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
+    // ---------- 25–29：搜尋 ----------
+
+    @Test
+    @DisplayName("25. 用關鍵字搜尋標題")
+    void search_shouldFindMatchingTitles() throws Exception {
+
+        createDocument(ownerToken, "週會記錄", "內容");
+        createDocument(ownerToken, "週會待辦", "內容");
+        createDocument(ownerToken, "讀書筆記", "內容");
+
+        assertThat(totalElements(ownerToken, "週會")).isEqualTo(2);
+        assertThat(totalElements(ownerToken, "筆記")).isEqualTo(1);
+        assertThat(totalElements(ownerToken, "不存在的關鍵字")).isZero();
+    }
+
+    @Test
+    @DisplayName("26. ★ 搜尋只找得到自己的——即使別人有同名文件")
+    void search_shouldOnlyReturnOwnDocuments() throws Exception {
+
+        createDocument(ownerToken, "機密報告", "我的");
+        createDocument(otherToken, "機密報告", "別人的");
+
+        /*
+         * 兩個人的文件標題一模一樣。
+         *
+         * 這個測試的價值在於：如果哪天有人把 userId 條件從搜尋查詢裡拿掉，
+         * 「搜得到」那條測試照樣會過——只有這一條會紅。
+         */
+        assertThat(totalElements(ownerToken, "機密報告")).isEqualTo(1);
+        assertThat(totalElements(otherToken, "機密報告")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("27. 已刪除的文件搜不到")
+    void search_shouldNotReturnDeletedDocuments() throws Exception {
+
+        long id = createDocument(ownerToken, "要刪掉的報告", "內容");
+
+        assertThat(totalElements(ownerToken, "報告")).isEqualTo(1);
+
+        mockMvc.perform(delete("/api/v1/documents/" + id)
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isNoContent());
+
+        assertThat(totalElements(ownerToken, "報告")).isZero();
+    }
+
+    @Test
+    @DisplayName("28. q 是空白時等於列出全部，不是零筆")
+    void search_withBlankKeyword_shouldReturnAll() throws Exception {
+
+        createDocument(ownerToken, "甲", "內容");
+        createDocument(ownerToken, "乙", "內容");
+
+        /*
+         * 若 Service 沒有把空白視為「沒有關鍵字」，
+         * 這裡會變成 LIKE '%%'——結果數字一樣，但那條查詢用不到索引，
+         * 等於把「列出全部」偷偷變成掃描。
+         */
+        assertThat(totalElements(ownerToken, "")).isEqualTo(2);
+        assertThat(totalElements(ownerToken, "   ")).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("29. 搜尋不分大小寫")
+    void search_shouldBeCaseInsensitive() throws Exception {
+
+        createDocument(ownerToken, "Meeting Notes", "內容");
+
+        assertThat(totalElements(ownerToken, "meeting")).isEqualTo(1);
+        assertThat(totalElements(ownerToken, "MEETING")).isEqualTo(1);
+        assertThat(totalElements(ownerToken, "Notes")).isEqualTo(1);
+    }
+
     // ---------- 輔助方法 ----------
 
     private String registerAndLogin(String email) throws Exception {
@@ -552,8 +626,21 @@ class DocumentFlowIntegrationTest {
     }
 
     private long totalElements(String token) throws Exception {
-        String body = mockMvc.perform(get("/api/v1/documents")
-                        .header("Authorization", "Bearer " + token))
+        return totalElements(token, null);
+    }
+
+    /**
+     * @param keyword 搜尋關鍵字；傳 null 代表不帶 {@code q} 參數
+     */
+    private long totalElements(String token, String keyword) throws Exception {
+
+        var request = get("/api/v1/documents").header("Authorization", "Bearer " + token);
+
+        if (keyword != null) {
+            request = request.param("q", keyword);
+        }
+
+        String body = mockMvc.perform(request)
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
 

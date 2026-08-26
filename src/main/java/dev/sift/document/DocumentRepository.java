@@ -54,4 +54,15 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
      * 需要它的原因是：Java 不允許只靠回傳型別區分同名方法。
      */
     Page<DocumentSummary> findSummariesByUserIdAndDeletedAtIsNull(Long userId, Pageable pageable);
+
+    /**
+     * 依標題關鍵字搜尋自己的未刪除文件。
+     *
+     * <p>{@code TitleContainingIgnoreCase} 產生 {@code LOWER(title) LIKE LOWER('%關鍵字%')}。
+     *
+     * <p>只搜標題不搜內文——內文可能很長，掃描成本高很多。
+     * 代價是「記得內容但忘記標題」時找不到。
+     */
+    Page<DocumentSummary> findSummariesByUserIdAndDeletedAtIsNullAndTitleContainingIgnoreCase(
+            Long userId, String keyword, Pageable pageable);
 }

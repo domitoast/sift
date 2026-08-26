@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URI;
@@ -70,6 +71,11 @@ public class DocumentController {
      *
      * <p>呼叫端可以覆寫：{@code ?page=1&size=50&sort=title,asc}
      *
+     * <p><b>{@code ?q=關鍵字} 會依標題篩選。</b>
+     * 搜尋沒有另開 {@code /search} 路徑，因為它回傳的是同一種資源、
+     * 同一種格式，只是被篩選過。另開路徑等於暗示「搜尋結果是另一種東西」，
+     * 而且分頁邏輯要寫兩份。
+     *
      * <p>每頁筆數上限由 {@code application.yml} 的
      * {@code spring.data.web.pageable.max-page-size} 控制。
      * <b>那個上限是必要的</b>：否則有人送 {@code ?size=999999999}，
@@ -78,10 +84,11 @@ public class DocumentController {
     @GetMapping
     public PageResponse<DocumentSummaryResponse> list(
             @AuthenticationPrincipal Long userId,
+            @RequestParam(required = false) String q,
             @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC)
             Pageable pageable) {
 
-        return documentService.findAll(userId, pageable);
+        return documentService.findAll(userId, q, pageable);
     }
 
     /**

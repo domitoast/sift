@@ -84,12 +84,25 @@ public class DocumentService {
      * 同一篇文件可能在兩頁都出現，也可能永遠不出現。
      */
     @Transactional(readOnly = true)
-    public PageResponse<DocumentSummaryResponse> findAll(Long userId, Pageable pageable) {
+    public PageResponse<DocumentSummaryResponse> findAll(Long userId, String keyword, Pageable pageable) {
 
-        Page<DocumentSummary> page = documentRepository
-                .findSummariesByUserIdAndDeletedAtIsNull(userId, pageable);
+        Page<DocumentSummary> page = hasKeyword(keyword)
+                ? documentRepository.findSummariesByUserIdAndDeletedAtIsNullAndTitleContainingIgnoreCase(
+                        userId, keyword.trim(), pageable)
+                : documentRepository.findSummariesByUserIdAndDeletedAtIsNull(userId, pageable);
 
         return PageResponse.from(page, DocumentSummaryResponse::from);
+    }
+
+    /**
+     * 空字串與純空白都視為「沒有關鍵字」。
+     *
+     * <p>不這樣處理的話，{@code ?q=} 會變成 {@code LIKE '%%'}——
+     * 結果雖然一樣（全部符合），但那條查詢用不到索引，
+     * 等於把「列出全部」偷偷變成全表掃描。
+     */
+    private boolean hasKeyword(String keyword) {
+        return keyword != null && !keyword.isBlank();
     }
 
     /**
