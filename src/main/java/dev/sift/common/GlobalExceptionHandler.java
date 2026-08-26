@@ -5,6 +5,7 @@ import dev.sift.auth.InvalidRefreshTokenException;
 import dev.sift.auth.RefreshTokenReuseException;
 import dev.sift.document.DocumentConflictException;
 import dev.sift.document.DocumentNotFoundException;
+import dev.sift.source.SourceNotFoundException;
 import dev.sift.user.EmailAlreadyUsedException;
 import dev.sift.user.UserNotFoundException;
 import org.slf4j.Logger;
@@ -233,6 +234,22 @@ public class GlobalExceptionHandler {
         );
         problem.setType(URI.create(ERROR_TYPE_BASE + "document-not-found"));
         problem.setTitle("文件不存在");
+
+        return problem;
+    }
+
+    /**
+     * 訂閱來源不存在、已刪除，或不屬於這個使用者 → 404 Not Found。
+     */
+    @ExceptionHandler(SourceNotFoundException.class)
+    public ProblemDetail handleSourceNotFound(SourceNotFoundException e) {
+
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.NOT_FOUND,
+                e.getMessage()
+        );
+        problem.setType(URI.create(ERROR_TYPE_BASE + "source-not-found"));
+        problem.setTitle("訂閱來源不存在");
 
         return problem;
     }
