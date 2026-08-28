@@ -25,6 +25,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 訂閱來源的整合測試。
  *
  * <p>測試案例由使用者在實作後列出（3–6 題），第 7 題為 Claude 補充。
+ *
+ * <p>第 9–11 題為 Day 14 空手日的驗收：擋重複訂閱。
+ * 三題分別對應 {@code existsByUrlAndUserIdAndDeletedAtIsNull} 這個方法名字裡的
+ * 三段條件——{@code Url}、{@code UserId}、{@code DeletedAtIsNull}，
+ * 少任何一段都會有一題變紅。
  */
 @ActiveProfiles("test")
 @SpringBootTest
@@ -182,6 +187,80 @@ class SourceFlowIntegrationTest {
         mockMvc.perform(get("/api/v1/sources")).andExpect(status().isUnauthorized());
         mockMvc.perform(post("/api/v1/sources")).andExpect(status().isUnauthorized());
         mockMvc.perform(delete("/api/v1/sources/1")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("9. ★ 同一個使用者重複訂閱同一個 url → 409")
+    void create_withDuplicateUrl_shouldReturnConflict() throws Exception {
+
+        String url = "https://dup.example.com/rss";
+
+        createSource(ownerToken, "第一次", url);
+
+        /*
+         * 這一條在保護 SourceService.create() 開頭的 existsBy 檢查。
+         *
+         * 把那個 if 註解掉，這個測試不會變綠——它會變成 409 以外的狀態碼
+         * （資料庫的 uq_source_user_url 會擋下來，但沒人處理就是 500）。
+         *
+         * 換句話說：這個測試同時證明了「有擋」與「擋出來的是正確的狀態碼」。
+         */
+        mockMvc.perform(post("/api/v1/sources")
+                        .header("Authorization", "Bearer " + ownerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"第二次","url":"%s","type":"RSS"}
+                                """.formatted(url)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.title").value("來源已訂閱"));
+
+        // 光是回 409 不夠——要確認真的沒有多存一筆
+        assertThat(sourceCount(ownerToken)).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("10. ★ 不同使用者訂閱同一個 url → 兩邊都成功")
+    void create_sameUrlByDifferentUsers_shouldBothSucceed() throws Exception {
+
+        /*
+         * 「重複」的範圍是「每個使用者各自」，不是全域（ADR-017）。
+         *
+         * 這一條在保護 repository 方法名字裡的 AndUserId。
+         * 少了它，第二個使用者會被第一個使用者的訂閱擋住。
+         */
+        String url = "https://shared.example.com/rss";
+
+        createSource(ownerToken, "我的", url);
+        createSource(otherToken, "別人的", url);
+
+        assertThat(sourceCount(ownerToken)).isEqualTo(1);
+        assertThat(sourceCount(otherToken)).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("11. ★ 刪除之後可以重新訂閱同一個 url")
+    void create_afterDelete_shouldSucceed() throws Exception {
+
+        /*
+         * 這一條在保護 repository 方法名字裡的 AndDeletedAtIsNull。
+         *
+         * 少了它，使用者刪掉一個來源就永遠加不回來——
+         * 因為那筆 soft delete 的資料仍留在表中，會被當成重複。
+         *
+         * 資料庫端的 uq_source_user_url 也帶了 WHERE deleted_at IS NULL，
+         * 兩層用的是同一個規則。
+         */
+        String url = "https://readd.example.com/rss";
+
+        long id = createSource(ownerToken, "第一次訂閱", url);
+
+        mockMvc.perform(delete("/api/v1/sources/" + id)
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isNoContent());
+
+        createSource(ownerToken, "重新訂閱", url);
+
+        assertThat(sourceCount(ownerToken)).isEqualTo(1);
     }
 
     // ---------- 輔助方法 ----------

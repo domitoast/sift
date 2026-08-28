@@ -22,4 +22,6 @@ public interface SourceRepository extends JpaRepository<Source, Long> {
      * 幾十個就算多了。這是「答得出上限」的清單。
      */
     List<Source> findAllByUserIdAndDeletedAtIsNullOrderByCreatedAtDesc(Long userId);
+
+    boolean existsByUrlAndUserIdAndDeletedAtIsNull(String url, Long userId);
 }

@@ -5,6 +5,7 @@ import dev.sift.auth.InvalidRefreshTokenException;
 import dev.sift.auth.RefreshTokenReuseException;
 import dev.sift.document.DocumentConflictException;
 import dev.sift.document.DocumentNotFoundException;
+import dev.sift.source.SourceAlreadySubscribedException;
 import dev.sift.source.SourceNotFoundException;
 import dev.sift.user.EmailAlreadyUsedException;
 import dev.sift.user.UserNotFoundException;
@@ -250,6 +251,26 @@ public class GlobalExceptionHandler {
         );
         problem.setType(URI.create(ERROR_TYPE_BASE + "source-not-found"));
         problem.setTitle("訂閱來源不存在");
+
+        return problem;
+    }
+
+    /**
+     * 重複訂閱同一個來源 → 409 Conflict。
+     *
+     * <p>與 {@code EmailAlreadyUsedException} 同一個理由：
+     * 請求本身的格式完全正確，只是與伺服器目前的狀態衝突。
+     * 400 表示「你的請求有問題」，這裡並不是。
+     */
+    @ExceptionHandler(SourceAlreadySubscribedException.class)
+    public ProblemDetail handleSourceAlreadySubscribed(SourceAlreadySubscribedException e) {
+
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.CONFLICT,
+                e.getMessage()
+        );
+        problem.setType(URI.create(ERROR_TYPE_BASE + "source-already-subscribed"));
+        problem.setTitle("來源已訂閱");
 
         return problem;
     }

@@ -81,23 +81,30 @@ POST /api/v1/sources  {"url":"https://news.ycombinator.com/rss", ...}   → 201 
 
 使用者刪掉了 `https://a.com/rss`，然後又想加回來。應該成功還是回 409？
 
-**我的決定與理由**：
+**決定：應該成功。**
 
-```
-（寫在這裡）
-```
+**理由（kevin 於 code review 時口述，答對且是事前想過的）**：
+
+> 刪掉的來源要能加回來。所以方法名字結尾要帶 `AndDeletedAtIsNull`——
+> 少了它，使用者刪掉一個來源之後就永遠加不回來，會一直收到 409。
+
+**這是今天最有價值的一項**：三個決定裡最容易漏掉的，而且是在寫程式當下
+自己推導出來的，不是照抄。由測試 11 保護。
 
 ### 決定 3：狀態碼
 
 409 Conflict 還是 400 Bad Request？為什麼？
 
-> 提示：想想「這個請求本身有問題」和「這個請求跟現在的資料狀態衝突」的差別。
+**決定：409 Conflict。**
 
-**我的決定與理由**：
+**理由**：
 
-```
-（寫在這裡）
-```
+> 400 的語意是「你的請求本身有問題」——格式錯、缺欄位、型別不對。
+> 但這個請求格式完全正確，`name`、`url`、`type` 都合法，
+> 它只是**跟伺服器目前的資料狀態衝突**。409 Conflict 正是這個語意。
+
+> ⚠️ **誠實記錄**：這一題是照 `EmailAlreadyUsedException` 的 handler 抄的，
+> 抄的時候沒有先讀那段註解。理由是 code review 時才補上的。
 
 ---
 
@@ -111,57 +118,73 @@ POST /api/v1/sources  {"url":"https://news.ycombinator.com/rss", ...}   → 201 
 
 ---
 
-## 加分題（做不完完全不扣分）
+## 加分題
 
 `UserService.register()` 裡有**兩道防線**擋 email 重複。
 
-1. 找出第二道是什麼，寫在下面
-2. 想一想：來源這裡需不需要同樣的第二道？
-3. 如果需要 → 那要多寫一份 `V5` migration
+**第二道防線是**：資料庫的 partial unique index。
 
-**第二道防線是**：
-
-```
-（寫在這裡）
+```sql
+CREATE UNIQUE INDEX uq_app_user_email
+    ON app_user (email)
+    WHERE deleted_at IS NULL;
 ```
 
-**來源需不需要？理由**：
+**來源需不需要？** 需要，而且**它早就存在了**：
 
+```sql
+-- V1__init.sql
+CREATE UNIQUE INDEX uq_source_user_url
+    ON source (user_id, url)
+    WHERE deleted_at IS NULL;
 ```
-（寫在這裡）
-```
+
+> ⚠️ **題目卡出錯了，是 Claude 的責任。**
+>
+> 原本寫「同一個網址可以加無數次 → 201」。**那是錯的**，寫題目時沒有回去查
+> `V1__init.sql`。真實情況是第二次 POST 會回 **500**——
+> 資料庫擋下來丟出 `DataIntegrityViolationException`，
+> 但 `GlobalExceptionHandler` 沒有對應的 handler，落到 catch-all。
+>
+> **所以今天做的事，實際上是「把一個 500 變成正確的 409」**，
+> 而不是「從無到有加上唯一性」。不需要 V5 migration。
 
 ---
 
-## 卡住紀錄
+## Code Review 結果（Day 14）
 
-**每次卡超過 10 分鐘就記一筆。格式：**
+### 自己寫對的
 
-```
-[時間] 卡在哪 → 我試了什麼 → 有沒有解決
-```
+| 項目 | 說明 |
+|---|---|
+| `existsByUrlAndUserIdAndDeletedAtIsNull` | 三段條件全對，兩個設計決定編碼在方法名字裡 |
+| Service 的檢查位置 | 放在 `new Source(...)` 之前，還沒建物件就擋掉 |
+| Handler 的 409 + `setType` + `setTitle` | 完整照範本，一項沒漏 |
+| **決定 2** | 事前想過，不是抄的 |
 
-例如：
+### Claude 補完的
 
-```
-[20 分鐘] 不知道 repository 方法名要怎麼取，Spring 才認得
-       → 去看 UserRepository 照著改
-       → 解決了，但不確定名字對不對
-```
+| # | 問題 | 處理 |
+|---|---|---|
+| 1 | 沒有測試（必做第 3 項） | 補上測試 9、10、11 |
+| 2 | `import dev.sift.source.*;` 多餘 | 刪除（同 package 不需 import） |
+| 3 | `SourceAlreadySubscribeException` 文法 | 改為 `Subscribed`（比照 `EmailAlreadyUsedException`） |
+| 4 | handler 放在檔案最尾、`FieldError` record 之後 | 移到 `handleSourceNotFound` 旁邊 |
+| 5 | 沒有第二道防線的 catch | 加上 `catch (DataIntegrityViolationException)`，避免並發時變 500 |
+| 6 | `save()` 改為 `saveAndFlush()` | 見下方說明 |
 
-紀錄：
+### 為什麼 `save()` 要改成 `saveAndFlush()`
 
-```
-（寫在這裡）
-```
+`save()` 之後，Hibernate **不保證**當下就把 INSERT 送到資料庫——
+它可能等到 transaction commit 才送。而 commit 發生在 `create()` **回傳之後**，
+那時候已經離開 try 區塊，**那個 catch 永遠不會被觸發**。
 
----
+`saveAndFlush()` 強迫立刻送出，唯一約束的衝突才會在 try 裡面被接住。
 
-## 完成後
+> 這就是 Day 10 那個 `flush()` 的同一件事：
+> **「Hibernate 把工作攢著，不是你叫它做它就馬上做。」**
 
-**不要先問我對不對。** 先自己回答一次：
+### 沒做的部分
 
-- 我能不能逐行解釋我寫的每一行？
-- 那個測試如果我把 service 的檢查註解掉，它會不會紅？（**去實際試一次**）
-
-然後才叫我來 review。
+- 卡住紀錄空白（沒有記錄過程）
+- 決定 1、3 的理由是 code review 時才補的，不是寫程式當下想的

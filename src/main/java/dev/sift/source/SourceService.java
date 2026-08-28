@@ -5,6 +5,7 @@ import dev.sift.source.dto.SourceResponse;
 import dev.sift.source.dto.UpdateSourceRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,17 +27,53 @@ public class SourceService {
         this.sourceRepository = sourceRepository;
     }
 
+    /**
+     * 新增訂閱來源。
+     *
+     * <p>擋重複的方式與 {@code UserService.register()} 相同，分兩道防線。
+     *
+     * @throws SourceAlreadySubscribedException 這個使用者已訂閱過同一個網址
+     */
     @Transactional
     public SourceResponse create(Long userId, CreateSourceRequest request) {
 
+        /*
+         * 第一道防線：先查詢，目的是給使用者清楚的錯誤訊息。
+         *
+         * 帶 DeletedAtIsNull 是刻意的——來源被 soft delete 之後應該可以重新訂閱。
+         * 少了這個條件，使用者刪掉一個來源就永遠加不回來。
+         *
+         * ⚠️ 這不是唯一性的保證。查詢與寫入之間有空隙，
+         * 使用者連點兩下「新增」就可能讓兩個請求同時通過這道檢查。
+         */
+        if (sourceRepository.existsByUrlAndUserIdAndDeletedAtIsNull(request.url(), userId)) {
+            throw new SourceAlreadySubscribedException();
+        }
+
         Source source = new Source(userId, request.name(), request.url(), request.type());
 
-        Source saved = sourceRepository.save(source);
+        try {
+            Source saved = sourceRepository.saveAndFlush(source);
 
-        log.info("訂閱來源建立成功 sourceId={} userId={} type={}",
-                saved.getId(), userId, saved.getType());
+            log.info("訂閱來源建立成功 sourceId={} userId={} type={}",
+                    saved.getId(), userId, saved.getType());
 
-        return SourceResponse.from(saved);
+            return SourceResponse.from(saved);
+
+        } catch (DataIntegrityViolationException e) {
+            /*
+             * 第二道防線：資料庫的 partial unique index uq_source_user_url
+             * （定義在 V1__init.sql，Day 3 設計 schema 時就存在）。
+             *
+             * 走到這裡代表上面的 existsBy 通過了，但寫入時仍撞到唯一約束——
+             * 也就是有另一個請求搶先寫入。
+             *
+             * 轉成與第一道防線相同的例外，呼叫端看到的行為才會一致。
+             * 沒有這個 catch 的話，這個情況會變成 500。
+             */
+            log.warn("新增來源時發生唯一約束衝突，判定為並發重複訂閱 userId={}", userId);
+            throw new SourceAlreadySubscribedException();
+        }
     }
 
     @Transactional(readOnly = true)
