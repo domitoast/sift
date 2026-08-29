@@ -128,6 +128,25 @@
         </dependency>
 
         <!--
+            Rome：Java 的 RSS / Atom 解析函式庫。
+
+            為什麼不自己解析 XML：
+            RSS 有 0.9 / 1.0 / 2.0 三個世代，Atom 又是另一套規格。
+            光是「一篇文章」這件事，RSS 叫 <item>、Atom 叫 <entry>，
+            日期欄位的名稱與格式也不一樣。
+
+            Rome 把這些差異吸收掉，對外只給一種 SyndFeed / SyndEntry。
+            我們因此只需要面對一種資料結構。
+
+            ⚠️ 版本要自己指定，理由同 JJWT——不在 Spring Boot 的管理範圍內。
+        -->
+        <dependency>
+            <groupId>com.rometools</groupId>
+            <artifactId>rome</artifactId>
+            <version>2.1.0</version>
+        </dependency>
+
+        <!--
             測試 Spring Security 的輔助工具，
             例如模擬「已登入的使用者」發送請求。
         -->

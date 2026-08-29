@@ -24,4 +24,17 @@ public interface SourceRepository extends JpaRepository<Source, Long> {
     List<Source> findAllByUserIdAndDeletedAtIsNullOrderByCreatedAtDesc(Long userId);
 
     boolean existsByUrlAndUserIdAndDeletedAtIsNull(String url, Long userId);
+
+    /**
+     * 排程要抓的所有來源：啟用中、未刪除。
+     *
+     * <p><b>這是全系統唯一一個不帶 userId 的查詢方法</b>，
+     * 因為排程不代表任何使用者——它要抓的是所有人的來源。
+     *
+     * <p>對應 V1 的 {@code idx_source_scheduling (deleted_at, enabled)}。
+     *
+     * <p>⚠️ 沒有分頁。目前來源數量以「幾十個」為量級，
+     * 若日後成長到數萬筆，這裡要改成分批處理。
+     */
+    List<Source> findAllByEnabledTrueAndDeletedAtIsNull();
 }

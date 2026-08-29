@@ -39,6 +39,21 @@ sift:
     # 測試專用的假金鑰。長度仍需符合 HS512 要求（至少 512 bits）。
     secret: dGVzdC1vbmx5LXNlY3JldC1rZXktZm9yLXVuaXQtdGVzdHMtbm90LWZvci1wcm9kdWN0aW9uLXVzZS1hdC1hbGwtcGFkZGluZw==
 
+  scheduling:
+    # ⚠️ 測試時一定要關掉排程。
+    #
+    # 不關的話，跑 mvnw test 的過程中排程會啟動，
+    # 然後真的對外網發出 HTTP 請求：
+    #   - 測試變慢（每次要等別人的伺服器回應）
+    #   - 測試變得不穩定（別人的網站掛掉，我們的 CI 就紅）
+    #   - 對別人的伺服器不禮貌
+    #
+    # 而 refresh token 清除排程若在測試中途執行，
+    # 會刪掉測試自己建立的資料，造成難以重現的失敗。
+    #
+    # SchedulingConfig 上的 @ConditionalOnProperty 讀的就是這個值。
+    enabled: false
+
 logging:
   level:
     org.flywaydb: WARN

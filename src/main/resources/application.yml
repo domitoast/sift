@@ -116,3 +116,35 @@ sift:
     secret: ${SIFT_JWT_SECRET}
     access-token-ttl-minutes: ${SIFT_JWT_ACCESS_TTL_MINUTES:15}
     refresh-token-ttl-days: ${SIFT_JWT_REFRESH_TTL_DAYS:7}
+
+  # ---------------------------------------------------------------
+  # 排程
+  # ---------------------------------------------------------------
+  scheduling:
+    # 所有排程的總開關（抓取、refresh token 清除）。
+    # 測試環境設 false，整個排程機制不會被建立。
+    enabled: ${SIFT_SCHEDULING_ENABLED:true}
+
+  cleanup:
+    # 清除過期 refresh token 的時間。
+    #
+    # Spring 的 cron 是六個欄位，比 Linux 多一個「秒」：
+    #   秒 分 時 日 月 星期
+    #   0  0  3  *  *  *     → 每天 03:00:00
+    #
+    # 挑凌晨是因為這是後台維護工作，不該和使用者搶資源。
+    refresh-token-cron: ${SIFT_CLEANUP_CRON:0 0 3 * * *}
+
+  fetch:
+    # 兩次抓取之間的間隔。
+    #
+    # ⚠️ 開發時設 60 秒是為了「改完程式碼等一分鐘就看得到結果」。
+    #    正式環境應該是 3600000（1 小時）或更長——
+    #    每分鐘去敲別人的網站是不禮貌的，而且很可能被封鎖。
+    interval-ms: ${SIFT_FETCH_INTERVAL_MS:60000}
+
+    # 啟動後多久跑第一次。
+    #
+    # 不設 0 的理由：應用程式剛啟動時還在建立連線池、跑 migration，
+    # 這時候插進來一輪抓取只會讓啟動變慢、log 變亂。
+    initial-delay-ms: ${SIFT_FETCH_INITIAL_DELAY_MS:10000}

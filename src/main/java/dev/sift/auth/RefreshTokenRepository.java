@@ -63,4 +63,25 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
     @Query("UPDATE RefreshToken rt SET rt.revokedAt = :now " +
            "WHERE rt.userId = :userId AND rt.revokedAt IS NULL")
     int revokeAllByUserId(@Param("userId") Long userId, @Param("now") Instant now);
+
+    /**
+     * 刪除已經過期的 refresh token（ADR-010 的清除政策，Day 15 實作）。
+     *
+     * <p><b>為什麼只依 expiresAt 刪，不刪已撤銷的</b>：
+     * 已撤銷但尚未過期的資料仍有用途——盜用偵測靠
+     * {@code findByPreviousTokenHash} 查得到那一列才成立。
+     * 而且它們最多只會存在 7 天（token 的有效期），數量有上限。
+     *
+     * <p>過期的則完全沒有價值：{@code isUsable()} 本來就會回 false，
+     * 留著只是佔空間。
+     *
+     * <p><b>這是真的 DELETE，不是 soft delete。</b>
+     * ADR-005 的 soft delete 是為了「使用者的資料可能要救回來」，
+     * 過期的 token 沒有任何人會想救。
+     *
+     * @return 實際刪掉的列數
+     */
+    @Modifying
+    @Query("DELETE FROM RefreshToken rt WHERE rt.expiresAt < :now")
+    int deleteExpired(@Param("now") Instant now);
 }
