@@ -6,9 +6,11 @@
 > - 🟢 能自己寫出來
 > - ⭐ 能講清楚為什麼，並說出替代方案與取捨
 
-**最後更新**：Day 15（抓取管線開工）
+**最後更新**：Day 16（補洞：測試、autodiscovery、抓取紀錄 API）
 
-> 📖 **本專案用到的所有註解，整理在 [`docs/ANNOTATIONS.md`](docs/ANNOTATIONS.md)。**
+> 📖 **參考文件**
+> - [`docs/ANNOTATIONS.md`](docs/ANNOTATIONS.md) — 本專案用到的所有註解
+> - [`docs/TESTING.md`](docs/TESTING.md) — 怎麼讀懂這個專案的測試
 
 ---
 
@@ -441,6 +443,40 @@
   **把對應的那段程式碼註解掉，它會不會紅？** 不會紅的測試是假的
 - **反例**：只寫「重複 → 409」一題，那 `AndUserId` 和 `AndDeletedAtIsNull`
   被誰刪掉都不會有人發現
+
+### E3.2 怎麼測「會連外網」的程式碼（Day 16）
+- **掌握度**：🟡（看得懂，尚未自己寫過）
+- **核心手法：不要連外網，自己架一個**
+
+  ```java
+  HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+  //                                                          ↑ 0 = 隨便挑一個沒被佔用的 port
+  ```
+  JDK 內建，不需要任何依賴。想讓它回 404 就回 404，想讓它慢十秒就慢十秒
+- **這些情況用真實網站重現不了**：你沒辦法叫 Hacker News 回你一個 500
+- **拆分原則**：把「不穩定的部分」縮到最小
+  - `FeedParser`、`FeedDiscoverer`、`InternalAddressChecker` → 完全不碰網路 → 純 unit test
+  - `FetchClient` → 碰網路 → 只有它需要假伺服器
+- **⚠️ 撞到的真實矛盾**：安全檢查擋住了自己的測試。
+  假伺服器只能架在 localhost，而 localhost 正是 SSRF 防護要擋的東西。
+  解法是「可以關掉，但關掉要很明顯」——加一個設定開關，
+  **打開時啟動 log 印出警告**，而且有一題測試專門驗證「關回去時真的擋得住」
+
+### E3.3 mock 的判斷（Day 16）
+- **掌握度**：🟢
+- **原則：只 mock 你控制不了的東西**
+
+  | 該 mock | 不該 mock |
+  |---|---|
+  | 外部網路、寄信、付款 | 你自己的 Repository / Service / 資料庫 |
+
+- **mock 太多的後果**：把 repository mock 掉之後，測到的是
+  「我叫 mock 回 false，然後它回了 false」——**方法名字對不對、
+  SQL 產得對不對，全部沒測到**
+- **`@Mock` vs `@MockitoBean`**：前者不啟動 Spring、只有你手動塞的地方拿到假的；
+  後者換掉整個容器裡的那一個
+- **本專案的實例**：`SourceFlowIntegrationTest` 換掉 `FeedResolver`，
+  因為 Day 16 起新增來源會真的連網路，而測試用的是 `mine.example.com` 這種假網址
 
 ### E4. Testcontainers
 - **掌握度**：⬜

@@ -2,6 +2,8 @@ package dev.sift.source;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.sift.fetch.FeedNotFoundException;
+import dev.sift.fetch.FeedResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -10,10 +12,13 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -47,11 +52,35 @@ class SourceFlowIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    /**
+     * 用假的 {@link FeedResolver} 取代真的那一個。
+     *
+     * <p><b>為什麼必須這樣做</b>：Day 16 起，新增來源會真的去抓一次網址。
+     * 若不替換，這個檔案裡每一次 {@code POST /sources} 都會對外發出 HTTP 請求：
+     *
+     * <ul>
+     *   <li>測試變慢——每題都要等網路</li>
+     *   <li>測試變得不穩定——別人的網站掛掉，我們的 CI 就紅</li>
+     *   <li>{@code mine.example.com} 這類假網址根本抓不到，所有測試都會失敗</li>
+     * </ul>
+     *
+     * <p><b>整合測試不該依賴外部網路。</b>
+     * 而 {@code FeedResolver} 自己的行為，由它自己的測試負責。
+     *
+     * <p>{@code @MockitoBean} 是 Spring Boot 3.4 起的寫法，
+     * 取代舊的 {@code @MockBean}（已標記為 deprecated）。
+     */
+    @MockitoBean
+    private FeedResolver feedResolver;
+
     private String ownerToken;
     private String otherToken;
 
     @BeforeEach
     void setUp() throws Exception {
+        // 預設行為：使用者填什麼就回什麼（假裝填的本來就是 feed 網址）
+        when(feedResolver.resolve(anyString())).thenAnswer(call -> call.getArgument(0));
+
         ownerToken = registerAndLogin(OWNER_EMAIL);
         otherToken = registerAndLogin(OTHER_EMAIL);
     }
@@ -261,6 +290,94 @@ class SourceFlowIntegrationTest {
         createSource(ownerToken, "重新訂閱", url);
 
         assertThat(sourceCount(ownerToken)).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("12. ★ 填首頁網址 → 存進去的是 autodiscovery 找到的 feed 網址")
+    void create_withHomepageUrl_shouldStoreDiscoveredFeedUrl() throws Exception {
+
+        /*
+         * 使用者複製網址列上的東西（首頁），不是 feed 網址。
+         * FeedResolver 會從那頁的 <link rel="alternate"> 找出真正的 feed。
+         *
+         * 重點是「存進資料庫的是哪一個」——必須是 feed 網址，
+         * 否則明天排程會拿首頁去解析，每天都失敗。
+         */
+        when(feedResolver.resolve("https://blog.example.com"))
+                .thenReturn("https://blog.example.com/feed.xml");
+
+        mockMvc.perform(post("/api/v1/sources")
+                        .header("Authorization", "Bearer " + ownerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"某部落格","url":"https://blog.example.com","type":"RSS"}
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.url").value("https://blog.example.com/feed.xml"));
+    }
+
+    @Test
+    @DisplayName("13. ★ 網址沒有提供 feed → 400，而不是存進去等明天才失敗")
+    void create_withoutFeed_shouldReturnBadRequest() throws Exception {
+
+        /*
+         * ADR-017 的核心：不能用的來源根本進不了資料庫。
+         *
+         * 若允許存進去，使用者會以為訂閱成功，
+         * 然後明天排程失敗，而那時候沒有人在看畫面。
+         */
+        String url = "https://no-feed.example.com";
+
+        when(feedResolver.resolve(url)).thenThrow(new FeedNotFoundException(url));
+
+        mockMvc.perform(post("/api/v1/sources")
+                        .header("Authorization", "Bearer " + ownerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"沒有feed","url":"%s","type":"RSS"}
+                                """.formatted(url)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.title").value("找不到 feed"));
+
+        // 光是回 400 不夠——要確認真的沒有存進去
+        assertThat(sourceCount(ownerToken)).isZero();
+    }
+
+    @Test
+    @DisplayName("14. ★ 看別人的來源的抓取紀錄 → 404")
+    void fetchJobs_otherUsersSource_shouldReturnNotFound() throws Exception {
+
+        /*
+         * 這一條在防 IDOR（Broken Access Control）。
+         *
+         * fetch_job 表沒有 user_id（ADR-012 跨聚合只存 id），
+         * 所以權限沒辦法像其他地方一樣寫進查詢條件。
+         * 必須先確認 source 屬於這個使用者，才去撈它的紀錄。
+         *
+         * 少了那一步，任何人只要猜 sourceId 就能看到別人訂閱了什麼。
+         */
+        long id = createSource(ownerToken, "我的來源", "https://mine.example.com/rss");
+
+        mockMvc.perform(get("/api/v1/sources/" + id + "/fetch-jobs")
+                        .header("Authorization", "Bearer " + otherToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("15. 剛建立的來源還沒被抓過 → 空清單，不是 404")
+    void fetchJobs_newSource_shouldReturnEmptyList() throws Exception {
+
+        /*
+         * 「來源存在但還沒有抓取紀錄」和「來源不存在」是兩件事。
+         * 前者回空陣列，後者回 404。
+         */
+        long id = createSource(ownerToken, "全新的來源", "https://brand-new.example.com/rss");
+
+        mockMvc.perform(get("/api/v1/sources/" + id + "/fetch-jobs")
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray())
+                .andExpect(jsonPath("$.length()").value(0));
     }
 
     // ---------- 輔助方法 ----------

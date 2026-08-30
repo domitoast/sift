@@ -54,6 +54,23 @@ sift:
     # SchedulingConfig 上的 @ConditionalOnProperty 讀的就是這個值。
     enabled: false
 
+  fetch:
+    # ⚠️ 只有測試環境可以是 true。
+    #
+    # FetchClientTest 會在 localhost 架一個假的 HTTP 伺服器，
+    # 而 localhost 解析出來是 127.0.0.1——正是正式環境要擋的東西。
+    #
+    # 「內部位址的判斷邏輯」本身由 InternalAddressCheckerTest 獨立驗證，
+    # 不受這個設定影響。
+    allow-internal-address: true
+
+    # 測試用的短 timeout：驗證一個 timeout 不必真的等 10 秒。
+    connect-timeout: 2s
+    request-timeout: 2s
+
+    # 測試用的小上限：產生 1 KB 的假回應比產生 5 MB 快得多。
+    max-body-bytes: 1024
+
 logging:
   level:
     org.flywaydb: WARN

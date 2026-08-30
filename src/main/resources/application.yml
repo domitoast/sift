@@ -136,6 +136,27 @@ sift:
     refresh-token-cron: ${SIFT_CLEANUP_CRON:0 0 3 * * *}
 
   fetch:
+    # ⚠️ 是否允許連到內部位址（loopback、內網、雲端 metadata）。
+    #
+    # 正式環境一律 false。設為 true 等同關閉 SSRF 防護——
+    # 使用者填 http://169.254.169.254/ 就能讓伺服器去讀雲端憑證。
+    #
+    # 存在的唯一理由是測試：測試用的假伺服器只能架在 localhost，
+    # 而 localhost 正是要擋的東西。
+    #
+    # 設為 true 時 FetchClient 會在啟動 log 印出警告。
+    allow-internal-address: ${SIFT_FETCH_ALLOW_INTERNAL:false}
+
+    # 建立連線的上限。對方防火牆把封包丟掉時，靠它脫身。
+    connect-timeout: ${SIFT_FETCH_CONNECT_TIMEOUT:5s}
+
+    # 整個請求的上限（含讀取回應）。擋 slowloris：連得上但每秒吐一個位元組。
+    # ⚠️ NFR-2.4 要求所有外部呼叫的 timeout 不得超過 10 秒。
+    request-timeout: ${SIFT_FETCH_REQUEST_TIMEOUT:10s}
+
+    # 回應大小上限。正常 RSS 約 20–200 KB，5 MB 已經非常寬鬆。
+    max-body-bytes: ${SIFT_FETCH_MAX_BODY_BYTES:5242880}
+
     # 兩次抓取之間的間隔。
     #
     # ⚠️ 開發時設 60 秒是為了「改完程式碼等一分鐘就看得到結果」。

@@ -1,5 +1,6 @@
 package dev.sift.fetch;
 
+import dev.sift.config.FetchProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -37,43 +38,46 @@ public class FetchClient {
 
     private static final Logger log = LoggerFactory.getLogger(FetchClient.class);
 
-    /**
-     * 連線 timeout：5 秒內連不上就放棄。
-     *
-     * <p>不設會怎樣：對方的伺服器「不回應也不拒絕」（例如防火牆把封包丟掉），
-     * 這個執行緒會一直等下去。10 個這種來源就吃掉 10 個執行緒，
-     * <b>整個服務被一個沒人用的部落格拖垮。</b>
-     */
-    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
-
-    /**
-     * 整個請求的 timeout：10 秒內沒拿完就放棄。
-     *
-     * <p>只設 connect timeout 不夠——對方可以「連得上，但每秒只吐一個位元組」，
-     * 連線是成功的，資料永遠傳不完。這種攻擊有名字，叫 slowloris。
-     */
-    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
-
-    /**
-     * 回應大小上限：5 MB。
-     *
-     * <p>一份正常的 RSS 大約 20–200 KB，5 MB 已經非常寬鬆。
-     *
-     * <p>不設會怎樣：對方回一個 10 GB 的檔案，我們照單全收，記憶體直接爆掉。
-     * 注意<b>不能等下載完再檢查大小</b>——那時候傷害已經造成了。
-     */
-    private static final int MAX_BODY_BYTES = 5 * 1024 * 1024;
+    private final FetchProperties properties;
+    private final InternalAddressChecker addressChecker;
 
     /**
      * HttpClient 建立一次就重複使用。
      *
      * <p>每次請求都 new 一個的話，連線池、執行緒池全部重來，很浪費。
      */
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(CONNECT_TIMEOUT)
-            // 不跟隨 redirect：檢查過的網址和實際連到的網址必須是同一個
-            .followRedirects(HttpClient.Redirect.NEVER)
-            .build();
+    private final HttpClient httpClient;
+
+    public FetchClient(FetchProperties properties, InternalAddressChecker addressChecker) {
+
+        this.properties = properties;
+        this.addressChecker = addressChecker;
+
+        this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(properties.connectTimeout())
+                // 不跟隨 redirect：檢查過的網址和實際連到的網址必須是同一個
+                .followRedirects(HttpClient.Redirect.NEVER)
+                .build();
+
+        /*
+         * 這個警告是「選項 C」的核心。
+         *
+         * allowInternalAddress 是為了測試而存在的——測試用的假伺服器
+         * 只能架在 localhost，而 localhost 正是我們要擋的東西。
+         *
+         * 但一個「可以關掉安全檢查」的開關本身就是風險：
+         * 有人在正式環境誤設成 true，防護就完全消失，而且悄無聲息。
+         *
+         * 所以規則不是「不准關」，是「關了要非常明顯」——
+         * 啟動 log 的第一頁就會看到這一行。
+         */
+        if (properties.allowInternalAddress()) {
+            log.warn("========================================================");
+            log.warn("  內部位址檢查已停用（sift.fetch.allow-internal-address）");
+            log.warn("  僅供測試使用。正式環境必須設為 false，否則存在 SSRF 風險。");
+            log.warn("========================================================");
+        }
+    }
 
     /**
      * @param url 要抓的網址
@@ -87,7 +91,7 @@ public class FetchClient {
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(uri)
-                .timeout(REQUEST_TIMEOUT)
+                .timeout(properties.requestTimeout())
                 // 表明身分是禮貌，也讓對方在需要時能封鎖我們而不是整段 IP
                 .header("User-Agent", "Sift/0.1 (+https://github.com/domitoast/sift)")
                 .header("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml")
@@ -158,20 +162,16 @@ public class FetchClient {
             throw new FeedFetchException(FailureType.PERMANENT, "找不到主機：" + host);
         }
 
+        if (properties.allowInternalAddress()) {
+            return;   // 僅測試環境。建構子已在啟動時印出 WARN
+        }
+
         for (InetAddress address : addresses) {
-            if (isInternal(address)) {
+            if (addressChecker.isInternal(address)) {
                 log.warn("拒絕連線到內部位址 host={} ip={}", host, address.getHostAddress());
                 throw new FeedFetchException(FailureType.PERMANENT, "不允許連線到內部位址");
             }
         }
-    }
-
-    private boolean isInternal(InetAddress address) {
-        return address.isLoopbackAddress()      // 127.0.0.1、::1
-                || address.isLinkLocalAddress()  // 169.254.x.x ← 雲端 metadata
-                || address.isSiteLocalAddress()  // 10.x、172.16-31.x、192.168.x
-                || address.isAnyLocalAddress()   // 0.0.0.0
-                || address.isMulticastAddress();
     }
 
     private void assertSuccessStatus(int statusCode) {
@@ -205,11 +205,11 @@ public class FetchClient {
         try (InputStream in = response.body()) {
 
             // 多讀 1 個 byte，用來判斷「是剛好到上限，還是被截斷了」
-            byte[] bytes = in.readNBytes(MAX_BODY_BYTES + 1);
+            byte[] bytes = in.readNBytes(properties.maxBodyBytes() + 1);
 
-            if (bytes.length > MAX_BODY_BYTES) {
+            if (bytes.length > properties.maxBodyBytes()) {
                 throw new FeedFetchException(FailureType.PERMANENT,
-                        "回應超過 %d MB 上限".formatted(MAX_BODY_BYTES / 1024 / 1024));
+                        "回應超過 %d bytes 上限".formatted(properties.maxBodyBytes()));
             }
 
             return new String(bytes, charsetOf(response));

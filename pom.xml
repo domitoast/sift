@@ -147,6 +147,29 @@
         </dependency>
 
         <!--
+            jsoup：HTML 解析。
+
+            用途只有一個：RSS autodiscovery——
+            使用者填的是網站首頁時，從 HTML 的 <head> 找出真正的 feed 網址。
+
+            為什麼不用正規表示式：同一件事有無數種寫法，
+            大小寫、單雙引號、屬性順序都不固定。
+            用 regex 解析 HTML 是有名的地雷。
+
+              <link rel="alternate" type="application/rss+xml" href="/feed">
+              <LINK REL='alternate' TYPE="application/atom+xml" HREF='/atom.xml'>
+              <link href="/feed.xml" rel="alternate" type="application/rss+xml"/>
+
+            jsoup 另一個好處是它能把相對路徑（/feed.xml）
+            解析成完整網址，不必自己處理。
+        -->
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+            <version>1.23.2</version>
+        </dependency>
+
+        <!--
             測試 Spring Security 的輔助工具，
             例如模擬「已登入的使用者」發送請求。
         -->

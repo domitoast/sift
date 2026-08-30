@@ -5,6 +5,8 @@ import dev.sift.auth.InvalidRefreshTokenException;
 import dev.sift.auth.RefreshTokenReuseException;
 import dev.sift.document.DocumentConflictException;
 import dev.sift.document.DocumentNotFoundException;
+import dev.sift.fetch.FeedFetchException;
+import dev.sift.fetch.FeedNotFoundException;
 import dev.sift.source.SourceAlreadySubscribedException;
 import dev.sift.source.SourceNotFoundException;
 import dev.sift.user.EmailAlreadyUsedException;
@@ -271,6 +273,52 @@ public class GlobalExceptionHandler {
         );
         problem.setType(URI.create(ERROR_TYPE_BASE + "source-already-subscribed"));
         problem.setTitle("來源已訂閱");
+
+        return problem;
+    }
+
+    /**
+     * 新增來源時，網址不是 feed 也找不到 feed → 400 Bad Request。
+     *
+     * <p>為什麼是 400：使用者填錯了。伺服器與這個網址都運作正常，
+     * 只是那個網址沒有提供 feed。
+     */
+    @ExceptionHandler(FeedNotFoundException.class)
+    public ProblemDetail handleFeedNotFound(FeedNotFoundException e) {
+
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST,
+                e.getMessage()
+        );
+        problem.setType(URI.create(ERROR_TYPE_BASE + "feed-not-found"));
+        problem.setTitle("找不到 feed");
+
+        return problem;
+    }
+
+    /**
+     * 新增來源時抓取失敗（連不上、404、超時）→ 400 Bad Request。
+     *
+     * <p><b>為什麼是 400 而不是 502</b>：
+     * 502 Bad Gateway 的語意是「我這個伺服器去問上游，上游壞了」——
+     * 那個上游是我們自己選的依賴，責任在我們。
+     *
+     * <p>但這裡的網址是使用者剛剛自己填的。網址連不上是他填錯，
+     * 責任在請求方，所以是 4xx。
+     *
+     * <p>⚠️ 這個 handler 只在「新增來源」的路徑上會被觸發。
+     * 排程抓取時的失敗不會走到這裡——那裡由 {@code FetchService}
+     * 自己接住並記進 fetch_job。
+     */
+    @ExceptionHandler(FeedFetchException.class)
+    public ProblemDetail handleFeedFetch(FeedFetchException e) {
+
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST,
+                "無法讀取這個網址：" + e.getMessage()
+        );
+        problem.setType(URI.create(ERROR_TYPE_BASE + "feed-fetch-failed"));
+        problem.setTitle("網址無法讀取");
 
         return problem;
     }

@@ -349,13 +349,34 @@ public class SchedulingConfig { }
 |---|---|
 | `@Test` | 這是一個測試 |
 | `@DisplayName("...")` | 測試報告上顯示的名稱，可以用中文 |
-| `@BeforeEach` | 每一題執行前都先跑一次 |
+| `@BeforeEach` | 每一題執行**前**都先跑一次（通常用來準備共同的東西） |
+| `@AfterEach` | 每一題執行**後**都跑一次（通常用來收拾，例如關掉測試用的伺服器） |
 | `@SpringBootTest` | **啟動整個 Spring**（有這個就是 integration test） |
 | `@AutoConfigureMockMvc` | 提供 `MockMvc`：模擬 HTTP 請求但不開真的 port |
 | `@ActiveProfiles("test")` | 啟用 test profile，載入 `application-test.yml` |
-| `@ExtendWith(MockitoExtension.class)` | 啟用 Mockito |
+| `@ExtendWith(MockitoExtension.class)` | 啟用 Mockito（不啟動 Spring 時用） |
 | `@Mock` | 產生一個假的物件 |
 | `@InjectMocks` | 把上面那些假物件塞進要測的類別 |
+| `@MockitoBean` | **在 Spring 的容器裡，把某個真的 bean 換成假的**（Day 16 新增） |
+
+### `@Mock` 和 `@MockitoBean` 的差別
+
+兩個都是「做一個假的」，差在**誰會拿到那個假的**。
+
+| | `@Mock` | `@MockitoBean` |
+|---|---|---|
+| 有沒有 Spring | 沒有 | **有** |
+| 誰拿到假的 | 只有你手動塞進去的那個物件 | **整個 Spring 容器裡，所有需要它的地方** |
+| 搭配 | `@ExtendWith(MockitoExtension.class)` | `@SpringBootTest` |
+| 本專案 | `UserServiceTest` | `SourceFlowIntegrationTest` |
+
+`SourceFlowIntegrationTest` 用 `@MockitoBean` 的理由：
+`SourceService` 是 Spring 建立並注入 `FeedResolver` 的，
+我們沒有機會手動塞東西進去。`@MockitoBean` 是去**換掉容器裡那一個**，
+所以 `SourceService` 拿到的自然就是假的。
+
+> ⚠️ `@MockitoBean` 是 Spring Boot 3.4 起的寫法，
+> 取代舊的 `@MockBean`（已 deprecated）。網路上的舊教學大多還是 `@MockBean`。
 
 ### 怎麼一眼分辨 unit / integration test
 
