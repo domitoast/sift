@@ -32,15 +32,18 @@ public class FetchService {
 
     private final SourceRepository sourceRepository;
     private final FetchJobService fetchJobService;
+    private final FetchedItemService fetchedItemService;
     private final FetchClient fetchClient;
     private final FeedParser feedParser;
 
     public FetchService(SourceRepository sourceRepository,
                         FetchJobService fetchJobService,
+                        FetchedItemService fetchedItemService,
                         FetchClient fetchClient,
                         FeedParser feedParser) {
         this.sourceRepository = sourceRepository;
         this.fetchJobService = fetchJobService;
+        this.fetchedItemService = fetchedItemService;
         this.fetchClient = fetchClient;
         this.feedParser = feedParser;
     }
@@ -86,9 +89,13 @@ public class FetchService {
             String rawFeed = fetchClient.fetch(source.getUrl());
             List<FetchedArticle> articles = feedParser.parse(rawFeed);
 
-            logSample(source, articles);
+            // ③ 一篇一個獨立的 transaction，重複的跳過
+            int newCount = save(source, jobId, articles);
 
-            // ③ 短 transaction：記錄結果
+            log.info("來源「{}」取得 {} 篇，其中 {} 篇是新的",
+                    source.getName(), articles.size(), newCount);
+
+            // ④ 短 transaction：記錄結果
             fetchJobService.succeed(jobId);
 
         } catch (FeedFetchException e) {
@@ -102,18 +109,27 @@ public class FetchService {
     }
 
     /**
-     * 暫時只把結果印出來。
+     * 一篇一篇存，回傳「新增了幾篇」。
      *
-     * <p>存進資料庫是 Day 17 的事——那需要先解決 dedup：
-     * 每小時抓一次，同一篇文章會出現在每一次的結果裡，
-     * 不去重的話一天會存出 24 份一樣的東西。
+     * <p><b>迴圈裡每一次呼叫都是一個獨立的 transaction</b>——
+     * {@code FetchedItemService.saveIfNew} 上有 {@code @Transactional}，
+     * 而這個類別沒有。
+     *
+     * <p>不能包成一個大 transaction：PostgreSQL 在交易中一旦撞到唯一約束，
+     * 整個交易就進入 aborted 狀態，後面的 INSERT 全部被拒絕。
+     * 而「撞到重複」在這裡是每小時都會發生 25 次的正常情況。
      */
-    private void logSample(Source source, List<FetchedArticle> articles) {
+    private int save(Source source, Long jobId, List<FetchedArticle> articles) {
 
-        log.info("來源「{}」取得 {} 篇文章", source.getName(), articles.size());
+        int newCount = 0;
 
-        articles.stream()
-                .limit(3)
-                .forEach(article -> log.info("    · {}", article.title()));
+        for (FetchedArticle article : articles) {
+            if (fetchedItemService.saveIfNew(source.getId(), jobId, article)) {
+                newCount++;
+                log.info("    + {}", article.title());
+            }
+        }
+
+        return newCount;
     }
 }

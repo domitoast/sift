@@ -10,7 +10,9 @@ import java.time.Instant;
  *
  * @param title       標題
  * @param link        原文網址
+ * @param content     內文。<b>可能是 null</b>——有些 feed 只給標題和連結。
+ *                    RSS 放在 {@code <description>}，Atom 放在 {@code <content>}
  * @param publishedAt 發布時間。<b>可能是 null</b>——很多 feed 不填這個欄位
  */
-public record FetchedArticle(String title, String link, Instant publishedAt) {
+public record FetchedArticle(String title, String link, String content, Instant publishedAt) {
 }

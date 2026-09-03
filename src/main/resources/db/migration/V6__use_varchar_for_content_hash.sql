@@ -1,0 +1,34 @@
+-- V6: 把 fetched_item.content_hash 從 CHAR(64) 改為 VARCHAR(64)
+--
+-- 【這是 V4 沒做完的事】
+--
+-- V4（Day 8）修正了 refresh_token 的兩個雜湊欄位，理由是
+-- Hibernate 把 @Column(length = 64) 的 String 對應成 VARCHAR，
+-- 與資料庫的 CHAR(64)（PostgreSQL 內部型別 bpchar）對不起來，
+-- ddl-auto: validate 會在啟動時直接失敗：
+--
+--   found [bpchar (Types#CHAR)], but expecting [varchar(64)]
+--
+-- 但當時只改了「當下會爆的那兩個欄位」，沒有回頭檢查 V1 裡
+-- 還有沒有其他 CHAR(n)。content_hash 就是漏掉的那一個，
+-- 一直到 Day 17 要建立 FetchedItem entity 時才會爆。
+--
+-- 【教訓】
+--
+-- 修正一個型別錯誤時，要問「同樣的錯誤還有沒有別的地方」，
+-- 而不是只修會爆的那一個。
+--
+-- 【為什麼 PostgreSQL 不建議 CHAR(n)】
+--
+-- 官方文件明確說明：char(n) 相較 varchar 沒有任何效能優勢，
+-- 而且會自動補空白到固定長度，多佔空間且比較時容易出意外。
+--
+-- 【資料安全性】
+--
+-- 執行當下 fetched_item 表是空的（Day 17 之前從未寫入過），
+-- 因此不需要處理既有資料的尾端空白問題。
+--
+-- 唯一索引 uq_fetched_item_source_hash 會由 PostgreSQL 自動重建。
+
+ALTER TABLE fetched_item
+    ALTER COLUMN content_hash TYPE VARCHAR(64);

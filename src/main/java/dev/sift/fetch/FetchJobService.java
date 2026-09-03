@@ -42,9 +42,26 @@ public class FetchJobService {
     /**
      * 為一個來源建立任務並標記為 RUNNING。
      *
+     * <p><b>⚠️ 這個方法刻意沒有 {@code @Transactional}</b>（Day 17 修正）。
+     *
+     * <p>它在 catch 裡<b>正常回傳 null</b>，而不是往外丟例外。
+     * 若加上 {@code @Transactional}，撞到唯一約束時那個交易已被標記為
+     * rollback-only，正常回傳會讓 Spring 在 commit 時丟出：
+     *
+     * <pre>
+     * UnexpectedRollback: Transaction silently rolled back because it has been marked as rollback-only
+     * </pre>
+     *
+     * <p>這個 bug 從 Day 15 就存在，但只有在「兩個實例同時跑排程」時才會觸發，
+     * 所以一直沒有被發現——直到 Day 17 在 {@code FetchedItemService}
+     * 寫出同樣的形狀，被測試抓到。
+     *
+     * <p>不需要交易也沒關係：查詢與寫入之間本來就有空隙
+     * （真正的保證是 {@code uq_fetch_job_active}），
+     * 而 {@code saveAndFlush} 本身就在自己的交易裡執行。
+     *
      * @return 新任務的 id；若這個來源已經有進行中的任務則回傳 {@code null}
      */
-    @Transactional
     public Long startJob(Long sourceId) {
 
         // 第一道防線：給友善的 log

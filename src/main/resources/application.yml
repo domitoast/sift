@@ -118,6 +118,29 @@ sift:
     refresh-token-ttl-days: ${SIFT_JWT_REFRESH_TTL_DAYS:7}
 
   # ---------------------------------------------------------------
+  # 加密（ADR-003：使用者的 LLM API key 必須加密後入庫）
+  # ---------------------------------------------------------------
+  encryption:
+    # ⚠️ 不給預設值。找不到就啟動失敗，理由同 jwt.secret。
+    #
+    # Base64 編碼的 256-bit 金鑰。產生方式（PowerShell）：
+    #   $b = New-Object byte[] 32
+    #   [Security.Cryptography.RNGCryptoServiceProvider]::new().GetBytes($b)
+    #   [Convert]::ToBase64String($b)
+    #
+    # 【為什麼要跟 jwt.secret 分開，不共用一把】
+    #
+    # 兩把鑰匙的用途、風險與生命週期都不同：
+    #   jwt.secret        簽章用，外洩 → 攻擊者可以偽造 token
+    #   encryption.secret 加密用，外洩 → 所有使用者的 API key 變明文
+    #
+    # 而且 jwt.secret 有機會需要輪替（例如懷疑外洩時），
+    # 但輪替它不應該連帶讓所有人的 API key 解不開。
+    #
+    # 一把鑰匙只做一件事，出事時的影響範圍才控制得住。
+    secret: ${SIFT_ENCRYPTION_SECRET}
+
+  # ---------------------------------------------------------------
   # 排程
   # ---------------------------------------------------------------
   scheduling:
@@ -169,3 +192,48 @@ sift:
     # 不設 0 的理由：應用程式剛啟動時還在建立連線池、跑 migration，
     # 這時候插進來一輪抓取只會讓啟動變慢、log 變亂。
     initial-delay-ms: ${SIFT_FETCH_INITIAL_DELAY_MS:10000}
+
+  # ---------------------------------------------------------------
+  # 摘要排程
+  #
+  # 與抓取分開，因為兩者的節奏不同：
+  #   抓取 每小時一次就夠，RSS 不會每分鐘更新
+  #   摘要 抓到之後應該盡快處理，使用者才看得到結果
+  # ---------------------------------------------------------------
+  summarize:
+    # 一輪最多處理幾篇。
+    #
+    # ⚠️ 這個上限不能省。第一次啟動時資料庫裡可能有幾百篇待處理，
+    #    不限制就會一次送出幾百個 LLM 請求——那是幾百次付費，
+    #    而且很可能直接撞到對方的限流。
+    #    做不完沒關係，下一輪繼續。
+    batch-size: ${SIFT_SUMMARIZE_BATCH_SIZE:10}
+
+    interval-ms: ${SIFT_SUMMARIZE_INTERVAL_MS:30000}
+
+    # 比抓取晚一點跑，讓第一輪抓取先把東西放進來
+    initial-delay-ms: ${SIFT_SUMMARIZE_INITIAL_DELAY_MS:20000}
+
+    # -------------------------------------------------------------
+    # 重試（exponential backoff）
+    #
+    # 只有 TRANSIENT 失敗會重試（429 限流、timeout、對方 5xx）。
+    # PERMANENT 失敗（API key 無效、內容為空）重試幾次都一樣。
+    # -------------------------------------------------------------
+    retry:
+      # 最多重試幾次。
+      #
+      # 為什麼是 3 不是 10：
+      #   每次重試都花錢
+      #   3 次的總等待是 1+2+4 = 7 分鐘，夠讓大部分的限流恢復
+      #   7 分鐘還不行，大概就不是暫時性問題了
+      max-attempts: ${SIFT_SUMMARIZE_MAX_ATTEMPTS:3}
+
+      # 第一次重試前等多久。之後每次翻倍：60s → 120s → 240s
+      base-delay: ${SIFT_SUMMARIZE_BASE_DELAY:60s}
+
+      # 抖動比例。0.2 代表在 ±20% 的範圍內隨機。
+      #
+      # 為什麼需要：100 篇同一秒失敗的話，它們的下次重試也會是同一秒——
+      # 尖峰只是往後移，沒有消失（thundering herd）。
+      jitter-ratio: ${SIFT_SUMMARIZE_JITTER_RATIO:0.2}

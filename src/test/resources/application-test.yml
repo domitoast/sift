@@ -39,6 +39,13 @@ sift:
     # 測試專用的假金鑰。長度仍需符合 HS512 要求（至少 512 bits）。
     secret: dGVzdC1vbmx5LXNlY3JldC1rZXktZm9yLXVuaXQtdGVzdHMtbm90LWZvci1wcm9kdWN0aW9uLXVzZS1hdC1hbGwtcGFkZGluZw==
 
+  encryption:
+    # 測試專用的假金鑰。Base64 解碼後正好 32 bytes（256 bits）——
+    # 解碼出來是 "sift-test-encryption-key-32bytes"。
+    #
+    # ⚠️ 這是公開在版控裡的值，絕不可用於正式環境。
+    secret: c2lmdC10ZXN0LWVuY3J5cHRpb24ta2V5LTMyYnl0ZXM=
+
   scheduling:
     # ⚠️ 測試時一定要關掉排程。
     #

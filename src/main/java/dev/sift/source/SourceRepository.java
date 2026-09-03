@@ -37,4 +37,16 @@ public interface SourceRepository extends JpaRepository<Source, Long> {
      * 若日後成長到數萬筆，這裡要改成分批處理。
      */
     List<Source> findAllByEnabledTrueAndDeletedAtIsNull();
+
+    /**
+     * 依 id 查詢，<b>不帶 userId</b>。
+     *
+     * <p>⚠️ <b>這個方法只能給排程使用，Controller 一律不可呼叫。</b>
+     *
+     * <p>用途：摘要排程拿到一篇 {@code FetchedItem}，需要知道它屬於哪個使用者，
+     * 才能取出那個人的 API key。排程不代表任何使用者，所以無從帶入 userId。
+     *
+     * <p>對外的查詢一律使用 {@link #findByIdAndUserIdAndDeletedAtIsNull}（ADR-013）。
+     */
+    Optional<Source> findByIdAndDeletedAtIsNull(Long id);
 }

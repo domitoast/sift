@@ -1,12 +1,15 @@
 package dev.sift.user;
 
 import dev.sift.user.dto.RegisterRequest;
+import dev.sift.user.dto.SetLlmApiKeyRequest;
 import dev.sift.user.dto.UserResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -68,5 +71,41 @@ public class UserController {
         UserResponse response = userService.findById(userId);
 
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 設定或更新自己的 LLM API key（ADR-003 BYOK）。
+     *
+     * <p><b>為什麼是 PUT 而不是 PATCH</b>：這裡只有一個欄位，
+     * 而且語意是「整個換掉」——沒有「只改一半」這種事。
+     * PATCH 適合「多個欄位，只改我有給的那些」，例如 {@code PATCH /sources/{id}}。
+     *
+     * <p><b>為什麼路徑是 {@code /me/llm-key} 而不是 {@code /users/{id}/llm-key}</b>：
+     * 使用者只能改自己的。路徑裡放 id 等於邀請別人去試別的 id——
+     * 那是 IDOR 的溫床。身分一律從 token 取得。
+     *
+     * <p>回應包含遮罩形式，讓使用者確認貼對了。
+     */
+    @PutMapping("/api/v1/me/llm-key")
+    public ResponseEntity<UserResponse> updateLlmApiKey(
+            @AuthenticationPrincipal Long userId,
+            @Valid @RequestBody SetLlmApiKeyRequest request) {
+
+        return ResponseEntity.ok(userService.updateLlmApiKey(userId, request.apiKey()));
+    }
+
+    /**
+     * 移除自己的 LLM API key。
+     *
+     * <p>回 204 No Content：操作成功，但沒有內容要回傳。
+     *
+     * <p>移除之後文章會停在 {@code NEW}，不算失敗（ADR-003）。
+     */
+    @DeleteMapping("/api/v1/me/llm-key")
+    public ResponseEntity<Void> clearLlmApiKey(@AuthenticationPrincipal Long userId) {
+
+        userService.clearLlmApiKey(userId);
+
+        return ResponseEntity.noContent().build();
     }
 }

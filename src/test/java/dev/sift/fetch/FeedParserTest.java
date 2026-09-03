@@ -103,6 +103,88 @@ class FeedParserTest {
     }
 
     @Test
+    @DisplayName("★ RSS 的內文在 <description>")
+    void parse_rssDescription_shouldBecomeContent() {
+
+        String rss = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <rss version="2.0">
+                  <channel>
+                    <title>測試</title>
+                    <item>
+                      <title>有內文的文章</title>
+                      <link>https://example.com/1</link>
+                      <description>這是文章的內容。</description>
+                    </item>
+                  </channel>
+                </rss>
+                """;
+
+        assertThat(parser.parse(rss).get(0).content()).isEqualTo("這是文章的內容。");
+    }
+
+    @Test
+    @DisplayName("★ Atom 的內文在 <content>")
+    void parse_atomContent_shouldBecomeContent() {
+
+        String atom = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <feed xmlns="http://www.w3.org/2005/Atom">
+                  <title>測試</title>
+                  <entry>
+                    <title>Atom 文章</title>
+                    <link href="https://example.com/a"/>
+                    <content>Atom 的內文放在這裡。</content>
+                  </entry>
+                </feed>
+                """;
+
+        assertThat(parser.parse(atom).get(0).content()).isEqualTo("Atom 的內文放在這裡。");
+    }
+
+    @Test
+    @DisplayName("★★ HTML 標籤要清乾淨——LLM 不該花錢讀那些標籤")
+    void parse_htmlContent_shouldBeStripped() {
+
+        /*
+         * feed 的內文幾乎都是 HTML。直接存下來會變成：
+         *   <p>今天發表了新版本，<a href="...">詳見公告</a>。</p>
+         *
+         * 那段東西送去 LLM，模型要花 token 讀那些標籤——而且是付費的 token。
+         *
+         * 注意 XML 裡的 HTML 是跳脫過的（&lt;p&gt;），Rome 解析後會還原成
+         * 真正的標籤字元，所以 jsoup 才有東西可以清。
+         */
+        String rss = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <rss version="2.0">
+                  <channel>
+                    <title>測試</title>
+                    <item>
+                      <title>有 HTML 的文章</title>
+                      <link>https://example.com/1</link>
+                      <description>&lt;p&gt;今天發表了新版本，&lt;a href="https://x.com"&gt;詳見公告&lt;/a&gt;。&lt;/p&gt;</description>
+                    </item>
+                  </channel>
+                </rss>
+                """;
+
+        String content = parser.parse(rss).get(0).content();
+
+        assertThat(content).isEqualTo("今天發表了新版本，詳見公告。");
+        assertThat(content).doesNotContain("<");
+        assertThat(content).doesNotContain("href");
+    }
+
+    @Test
+    @DisplayName("★ 沒有內文是正常的，content 為 null 而不是爆掉")
+    void parse_withoutContent_shouldGiveNull() {
+
+        // RSS 常數裡的第二篇沒有 description
+        assertThat(parser.parse(RSS).get(1).content()).isNull();
+    }
+
+    @Test
     @DisplayName("★ 沒有 link 的項目會被略過")
     void parse_itemWithoutLink_shouldBeSkipped() {
 

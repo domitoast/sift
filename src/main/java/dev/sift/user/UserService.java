@@ -26,6 +26,7 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final EncryptionService encryptionService;
 
     /**
      * 建構子注入（constructor injection）。
@@ -36,9 +37,12 @@ public class UserService {
      * 而且若 Spring 找不到對應的 Bean，<b>啟動時就會失敗</b>，
      * 而不是等到執行到那一行才丟 NullPointerException。
      */
-    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+    public UserService(UserRepository userRepository,
+                       PasswordEncoder passwordEncoder,
+                       EncryptionService encryptionService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.encryptionService = encryptionService;
     }
 
     /**
@@ -152,6 +156,97 @@ public class UserService {
 
         User user = found.get();
 
-        return UserResponse.from(user);
+        return UserResponse.from(user, maskedKeyOf(user));
+    }
+
+    /**
+     * 設定或更新 LLM API key（ADR-003 BYOK）。
+     *
+     * <p>流程：明文進來 → 立刻加密 → 存加密後的值。
+     * <b>明文除了這個方法的參數之外，不出現在任何地方</b>：
+     * 不進日誌、不進資料庫、不回傳。
+     *
+     * @throws UserNotFoundException 查無此人
+     */
+    @Transactional
+    public UserResponse updateLlmApiKey(Long userId, String rawApiKey) {
+
+        User user = loadActive(userId);
+
+        user.updateLlmApiKey(encryptionService.encrypt(rawApiKey));
+
+        /*
+         * 日誌只記 userId，不記 key，也不記 key 的長度或前綴。
+         *
+         * 「只記前四碼應該還好吧」——不要開這個頭。
+         * 日誌會被複製、會被送到第三方的收集服務、會被截圖貼進聊天室。
+         */
+        log.info("LLM API key 已更新 userId={}", userId);
+
+        return UserResponse.from(user, maskedKeyOf(user));
+    }
+
+    /**
+     * 移除 LLM API key。
+     *
+     * <p>移除之後，這個使用者的文章會停在 {@code NEW} 狀態，
+     * <b>不視為失敗</b>——ADR-003 明訂「若 User 未設定 key，
+     * FetchedItem 停留在 NEW 狀態，不視為失敗」。
+     */
+    @Transactional
+    public void clearLlmApiKey(Long userId) {
+
+        loadActive(userId).clearLlmApiKey();
+
+        log.info("LLM API key 已移除 userId={}", userId);
+    }
+
+    /**
+     * 取出解密後的 API key，供摘要工作使用。
+     *
+     * <p><b>這是整個系統唯一一個會產生明文 key 的地方。</b>
+     * 呼叫端拿到之後應該立刻用掉，不要存起來、不要放進任何物件的欄位。
+     *
+     * @return 明文的 key；未設定時回傳 {@code null}
+     */
+    @Transactional(readOnly = true)
+    public String findDecryptedApiKey(Long userId) {
+
+        User user = loadActive(userId);
+
+        if (!user.hasLlmApiKey()) {
+            return null;
+        }
+
+        return encryptionService.decrypt(user.getLlmApiKeyEncrypted());
+    }
+
+    private User loadActive(Long userId) {
+        return userRepository.findByIdAndDeletedAtIsNull(userId)
+                .orElseThrow(UserNotFoundException::new);
+    }
+
+    /**
+     * 產生遮罩形式，例如 {@code sk-a...mnop}。
+     *
+     * <p>為什麼要露出頭尾各四碼而不是全部遮掉：
+     * 使用者需要能確認「我貼上去的是不是正確的那一把」。
+     * 這是 Stripe、AWS 等服務的通用做法。
+     *
+     * <p>太短的字串一律全遮——露出頭尾對一個 8 字元的字串來說等於沒遮。
+     */
+    private String maskedKeyOf(User user) {
+
+        if (!user.hasLlmApiKey()) {
+            return null;
+        }
+
+        String plain = encryptionService.decrypt(user.getLlmApiKeyEncrypted());
+
+        if (plain.length() < 12) {
+            return "****";
+        }
+
+        return plain.substring(0, 4) + "..." + plain.substring(plain.length() - 4);
     }
 }

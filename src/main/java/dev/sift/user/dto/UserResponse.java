@@ -21,14 +21,17 @@ import java.time.Instant;
  * 因為每個欄位都必須在 {@link #from(User)} 中明確寫出來。
  * 這是「預設不外洩」，而非「記得要排除」。
  *
- * @param id        使用者 id
- * @param email     登入帳號
- * @param createdAt 帳號建立時間
+ * @param id               使用者 id
+ * @param email            登入帳號
+ * @param createdAt        帳號建立時間
+ * @param llmApiKeyMasked  LLM API key 的遮罩形式，例如 {@code sk-a...mnop}。
+ *                         <b>未設定時為 null</b>（ADR-003：只能回傳遮罩）
  */
 public record UserResponse(
         Long id,
         String email,
-        Instant createdAt
+        Instant createdAt,
+        String llmApiKeyMasked
 ) {
 
     /**
@@ -42,10 +45,20 @@ public record UserResponse(
      * API 格式；日後要支援第二種格式（例如簡化版的列表回應）就會很尷尬。
      */
     public static UserResponse from(User user) {
+        return from(user, null);
+    }
+
+    /**
+     * @param llmApiKeyMasked 已經遮罩好的字串。
+     *                        <b>遮罩由 Service 負責</b>——它才有解密的能力，
+     *                        而 DTO 不該認識 EncryptionService
+     */
+    public static UserResponse from(User user, String llmApiKeyMasked) {
         return new UserResponse(
                 user.getId(),
                 user.getEmail(),
-                user.getCreatedAt()
+                user.getCreatedAt(),
+                llmApiKeyMasked
         );
     }
 }

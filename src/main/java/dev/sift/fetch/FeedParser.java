@@ -4,6 +4,7 @@ import com.rometools.rome.feed.synd.SyndEntry;
 import com.rometools.rome.feed.synd.SyndFeed;
 import com.rometools.rome.io.FeedException;
 import com.rometools.rome.io.SyndFeedInput;
+import org.jsoup.Jsoup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -89,7 +90,72 @@ public class FeedParser {
             return null;
         }
 
-        return new FetchedArticle(title, link, toInstant(entry.getPublishedDate()));
+        return new FetchedArticle(title, link, extractContent(entry),
+                toInstant(entry.getPublishedDate()));
+    }
+
+    /**
+     * 取出文章內文，並清掉 HTML 標籤。
+     *
+     * <p>RSS 和 Atom 放的地方不一樣：
+     *
+     * <pre>{@code
+     * RSS   <description>一段文字</description>   → getDescription()
+     * Atom  <content>一段文字</content>           → getContents()
+     * }</pre>
+     *
+     * <p>Atom 的 {@code <content>} 可以有多個（不同格式的同一份內容），
+     * 取第一個就好。
+     *
+     * <p><b>回傳 null 是正常的</b>——很多 feed 只給標題和連結。
+     */
+    private String extractContent(SyndEntry entry) {
+
+        // Atom 優先：<content> 通常是完整內文，<description> 只是摘要
+        if (entry.getContents() != null && !entry.getContents().isEmpty()) {
+            String cleaned = stripHtml(entry.getContents().get(0).getValue());
+            if (cleaned != null) {
+                return cleaned;
+            }
+        }
+
+        if (entry.getDescription() != null) {
+            return stripHtml(entry.getDescription().getValue());
+        }
+
+        return null;
+    }
+
+    /**
+     * 把 HTML 標籤清掉，只留純文字。
+     *
+     * <p><b>為什麼需要</b>：feed 的內文幾乎都是 HTML，直接存下來會變成這樣：
+     *
+     * <pre>{@code
+     * <p>今天發表了新版本，<a href="https://...">詳見公告</a>。</p>
+     * }</pre>
+     *
+     * <p>那段東西送去給 LLM 產生摘要，模型要花 token 讀那些標籤，
+     * <b>而且是付費的 token</b>。清乾淨之後只剩：
+     *
+     * <pre>今天發表了新版本，詳見公告。</pre>
+     *
+     * <p>用 jsoup 而不是正規表示式——理由與 Day 16 的 autodiscovery 相同，
+     * HTML 的寫法變化太多。而且 jsoup 會順便處理 {@code &amp;} 這類跳脫字元。
+     *
+     * <p>⚠️ <b>已知限制</b>：有些來源的 {@code <description>} 本來就不是內文。
+     * 例如 Hacker News 放的是一個「Comments」連結，清乾淨之後只剩 {@code Comments}。
+     * 那不是我們能修的——真的要全文必須去抓 {@code external_url} 的原始網頁，
+     * 那是另一個工程（而且是新的 SSRF 面）。
+     */
+    private String stripHtml(String html) {
+
+        String trimmed = trimToNull(html);
+        if (trimmed == null) {
+            return null;
+        }
+
+        return trimToNull(Jsoup.parse(trimmed).text());
     }
 
     private String trimToNull(String value) {

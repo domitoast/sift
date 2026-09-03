@@ -118,6 +118,30 @@ public class User {
         this.passwordHash = passwordHash;
     }
 
+    /**
+     * 設定（或更新）加密後的 LLM API key。
+     *
+     * <p><b>參數一定是「已經加密過的」字串。</b>
+     * 加密由 {@code EncryptionService} 負責，Entity 不做那件事——
+     * Entity 不應該知道加密演算法是什麼。
+     *
+     * <p>方法名字刻意不叫 {@code setLlmApiKeyEncrypted}：
+     * 那樣會讓呼叫端以為「隨便塞什麼都可以」。
+     * 叫 {@code updateLlmApiKey} 是在說「這是一個有意義的操作」。
+     */
+    public void updateLlmApiKey(String encrypted) {
+        this.llmApiKeyEncrypted = encrypted;
+    }
+
+    /** 移除已設定的 key。之後這個使用者的文章會停在 NEW，不視為失敗（ADR-003）。 */
+    public void clearLlmApiKey() {
+        this.llmApiKeyEncrypted = null;
+    }
+
+    public boolean hasLlmApiKey() {
+        return llmApiKeyEncrypted != null;
+    }
+
     public Long getId() {
         return id;
     }
