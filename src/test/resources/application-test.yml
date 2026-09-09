@@ -78,6 +78,10 @@ sift:
     # 測試用的小上限：產生 1 KB 的假回應比產生 5 MB 快得多。
     max-body-bytes: 1024
 
+  summarize:
+    # 測試用的小配額：驗證「額度用完會被擋」不需要真的呼叫 200 次。
+    daily-quota: 3
+
 logging:
   level:
     org.flywaydb: WARN

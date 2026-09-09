@@ -48,6 +48,7 @@ public class SummarizeService {
     private final UserService userService;
     private final Summarizer summarizer;
     private final RetryPolicy retryPolicy;
+    private final QuotaService quotaService;
 
     private final int batchSize;
 
@@ -57,6 +58,7 @@ public class SummarizeService {
                             UserService userService,
                             Summarizer summarizer,
                             RetryPolicy retryPolicy,
+                            QuotaService quotaService,
                             @Value("${sift.summarize.batch-size}") int batchSize) {
 
         this.fetchedItemRepository = fetchedItemRepository;
@@ -65,6 +67,7 @@ public class SummarizeService {
         this.userService = userService;
         this.summarizer = summarizer;
         this.retryPolicy = retryPolicy;
+        this.quotaService = quotaService;
         this.batchSize = batchSize;
     }
 
@@ -140,6 +143,16 @@ public class SummarizeService {
              * 停在 NEW，不視為失敗。他重新設定 key 之後，下一輪會自己處理。
              */
             log.debug("使用者剛移除 API key，跳過 itemId={} userId={}", item.getId(), userId.get());
+            return false;
+        }
+
+        /*
+         * 配額檢查放在呼叫之前，而且會先佔用額度。
+         *
+         * 額度用完時停在 NEW，不標成失敗——與「沒有 key」是同一個判斷：
+         * 這不是失敗，是「今天先到這裡」。明天額度重置，這些文章會自己被處理。
+         */
+        if (!quotaService.tryConsume(userId.get())) {
             return false;
         }
 

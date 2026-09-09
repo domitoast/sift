@@ -209,6 +209,17 @@ sift:
     #    做不完沒關係，下一輪繼續。
     batch-size: ${SIFT_SUMMARIZE_BATCH_SIZE:10}
 
+    # 每個使用者每天最多呼叫幾次 LLM。
+    #
+    # ⚠️ 這是安全閥，不是商業規則（ADR-003）。
+    #
+    # 因為採 BYOK，花的是使用者自己的錢，我們沒有立場限制他用多少。
+    # 但我們有責任確保「我們的程式不會因為一個 bug 幫他把錢燒光」。
+    #
+    # 失控的具體形態：有人把 interval-ms 從 30000 改成 1000，
+    # 一天就是 86 萬次呼叫。上限 200 的意思是「出事時損失有天花板」。
+    daily-quota: ${SIFT_SUMMARIZE_DAILY_QUOTA:200}
+
     interval-ms: ${SIFT_SUMMARIZE_INTERVAL_MS:30000}
 
     # 比抓取晚一點跑，讓第一輪抓取先把東西放進來
