@@ -6,7 +6,7 @@
 > - 🟢 能自己寫出來
 > - ⭐ 能講清楚為什麼，並說出替代方案與取捨
 
-**最後更新**：Day 19（修 head-of-line blocking + retry 與 exponential backoff）
+**最後更新**：Day 20（每日配額 + CI 上線）
 
 > 📖 **參考文件**
 > - [`docs/ANNOTATIONS.md`](docs/ANNOTATIONS.md) — 本專案用到的所有註解
@@ -439,9 +439,33 @@
 - **日誌等級**：撞到重複用 `debug` 不用 `warn`——
   正常運作的系統每小時會撞 25 次，用 warn 會把真正的問題淹掉
 
-### C8. Rate limiting 與配額控制
-- **掌握度**：⬜
-- **本專案用途**：控制 LLM API 呼叫成本
+### C8. Rate limiting 與配額控制（Day 20）
+- **掌握度**：🟢（V7 + `QuotaService` + 4 題測試）
+- **⭐ 定位是「安全閥」，不是「商業規則」**（ADR-003）：
+  採 BYOK，花的是使用者自己的錢，我們沒有立場限制他用多少。
+  但我們有責任確保**我們的程式不會因為一個 bug 幫他把錢燒光**
+- **具體的失控形態**：有人把排程間隔從 30 秒改成 1 秒 → 一天 86 萬次呼叫。
+  上限 200 的意思是「出事時損失有天花板」
+- **先加再打，不是打完再加**：呼叫送出去就可能被計費了，即使它最後失敗。
+  打完才加的話，一直失敗的呼叫永遠不計數——**正好是最會燒錢的情況**
+- **配額用完 → 停在 `NEW`，不標成失敗**：與「沒有 API key」同一個判斷。
+  這不是失敗，是「今天先到這裡」，明天自己會恢復
+- **UPSERT**：一句 SQL 完成「有就加一，沒有就建一筆」
+
+  ```sql
+  INSERT INTO llm_usage (...) VALUES (..., 1)
+  ON CONFLICT (user_id, usage_date)
+  DO UPDATE SET call_count = llm_usage.call_count + 1
+  ```
+  自己在 Java 拼「先查 → 有就 UPDATE → 沒有就 INSERT」是三個動作、兩個空隙，
+  並發時會雙雙 INSERT。**UPSERT 是資料庫內部的單一動作，沒有那個空隙**
+  （與 Day 17 的 insert-or-ignore 同一類手法）
+- **`COALESCE(x, 0)`**：SQL 裡「查不到」回傳的是 `null` 不是 `0`。
+  沒有包 COALESCE，第一次使用就會 NullPointerException——
+  這與 Day 13 的 `Boolean` vs `boolean` 是同一件事
+- **為什麼獨立一張表而不是加回 `app_user`**：生命週期不同
+  （身分表一年改不到一次，計數器每次呼叫都要寫），
+  而且每天一列天然帶著歷史
 
 ---
 
@@ -657,8 +681,53 @@
 - **核心概念**：用一個 YAML 描述多個容器怎麼一起跑
 - **關鍵設定**：鎖版本（不用 latest）、volume（保資料）、healthcheck（等就緒）
 
-### F4. GitHub Actions
-- **掌握度**：⬜
+### F4. GitHub Actions（Day 20）
+- **掌握度**：🟢（自己看著寫完，第一次執行就抓到一個真的 bug）
+- **CI 做的事只有一件**：每次 push，**在一台乾淨的機器上**把測試跑一遍
+- **⭐ 「乾淨」才是重點**：它抓得到一整類本機永遠抓不到的問題——
+  「在我電腦上可以跑」
+- **檔案位置固定**：`.github/workflows/*.yml`。檔名自由
+- **三層結構**：
+
+  ```
+  workflow  整份 yml：什麼時候、要做哪些事
+     └── job     一件事。多個 job 預設同時跑
+           └── step   一個步驟。同一個 job 裡依序跑
+  ```
+
+- **`services` vs `steps`**：
+
+  | | |
+  |---|---|
+  | step | 執行一次，做完就結束 |
+  | **service** | **整個 job 期間一直開著**（資料庫必須是這種） |
+
+- **service 的 health check 不能省**：容器「啟動」不等於資料庫「準備好」。
+  少了它，測試會在初始化期間開始跑，拿到「連線被拒絕」——**而程式其實沒問題**。
+  這與 `docker-compose.yml` 的 healthcheck 是同一件事
+- **`uses` vs `run`**：前者用別人寫好的動作（`actions/checkout@v4`），
+  後者直接執行指令
+- **`cache: maven` 省 2–3 分鐘**：不然每次都要重新下載所有依賴
+
+#### ⭐ 第一次執行就抓到的 bug：`exit code 126`
+
+126 的意思是「檔案找得到，但不能執行」。
+
+原因：**Linux/macOS 的檔案有「可執行」旗標，Windows 沒有這個概念。**
+所以 `mvnw` 推上去時那個旗標沒被記錄，Linux 上 clone 下來就不能執行。
+
+> **任何人在 Linux 或 Mac 上 clone 這個專案，`./mvnw test` 都會失敗。**
+> README 寫著那行指令，而它對 Windows 以外的人是假的。
+
+修法是 `git update-index --chmod=+x mvnw`——把權限記進 git。
+
+**不是在 CI 裡加一行 `chmod +x`**：那只會讓 CI 變綠，
+在 Mac 上 clone 的人還是不能執行。
+**CI 綠了不等於問題解決了。**
+
+- **面試考點**：「你怎麼確保程式碼品質？」——
+  「我有寫測試」和「我的測試每次 push 都會跑」是兩個層級。
+  **任何靠『記得』的品質保證遲早會失效**
 
 ### F5. 結構化 Logging
 - **掌握度**：⬜

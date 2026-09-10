@@ -2,8 +2,14 @@ package dev.sift.source;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.sift.fetch.FailureType;
 import dev.sift.fetch.FeedNotFoundException;
 import dev.sift.fetch.FeedResolver;
+import dev.sift.fetch.FetchJob;
+import dev.sift.fetch.FetchJobRepository;
+import dev.sift.fetch.FetchedArticle;
+import dev.sift.fetch.FetchedItem;
+import dev.sift.fetch.FetchedItemRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -15,6 +21,8 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -72,6 +80,13 @@ class SourceFlowIntegrationTest {
      */
     @MockitoBean
     private FeedResolver feedResolver;
+
+    /** 第 16、19 題要直接塞文章進資料庫，跳過整條抓取管線。 */
+    @Autowired
+    private FetchedItemRepository fetchedItemRepository;
+
+    @Autowired
+    private FetchJobRepository fetchJobRepository;
 
     private String ownerToken;
     private String otherToken;
@@ -380,7 +395,110 @@ class SourceFlowIntegrationTest {
                 .andExpect(jsonPath("$.length()").value(0));
     }
 
+    @Test
+    @DisplayName("16. ★★ 列出文章：新的在前，而且不含 rawContent")
+    void items_shouldReturnArticlesNewestFirst() throws Exception {
+
+        /*
+         * 原本這一題只檢查 status 200。
+         *
+         * 那樣的話，就算查詢寫錯（永遠回傳空陣列），它照樣是綠的——
+         * 這一題什麼都沒有守住。
+         *
+         * 「回 200」和「回了正確的東西」是兩件事。
+         */
+        long sourceId = createSource(ownerToken, "有文章的來源", "https://has-items.example.com/rss");
+        long jobId = fetchJobRepository.save(new FetchJob(sourceId)).getId();
+
+        saveItem(sourceId, jobId, "第一篇", "hash-a");
+        saveItem(sourceId, jobId, "第二篇", "hash-b");
+
+        mockMvc.perform(get("/api/v1/sources/" + sourceId + "/items")
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                // 新的在前
+                .andExpect(jsonPath("$[0].title").value("第二篇"))
+                // 決定 1：列表不回傳原始內文，那可能好幾 KB
+                .andExpect(jsonPath("$[0].rawContent").doesNotExist())
+                // sourceId 已經在網址裡，不重複回傳
+                .andExpect(jsonPath("$[0].sourceId").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("17. ★ 看別人的來源的文章 → 404")
+    void items_otherUsersSource_shouldReturnNotFound() throws Exception {
+
+        long id = createSource(ownerToken, "我的來源", "https://mine.example.com/rss");
+
+        mockMvc.perform(get("/api/v1/sources/" + id + "/items")
+                        .header("Authorization", "Bearer " + otherToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("18. 剛建立的來源還沒抓過 → 空陣列，不是 404")
+    void items_newSource_shouldReturnEmptyList() throws Exception {
+
+        /*
+         * 「來源存在但沒有文章」和「來源不存在」是兩件事：
+         *   前者 → 200 + []
+         *   後者 → 404
+         *
+         * 原本這一題期望 404，跟它自己的標題矛盾。
+         * 而且 404 回的是 Problem Details 物件，不是陣列——
+         * 下面那兩行斷言在 404 的情況下不可能通過。
+         */
+        long id = createSource(ownerToken, "全新的來源", "https://brand-new.example.com/rss");
+
+        mockMvc.perform(get("/api/v1/sources/" + id + "/items")
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    @DisplayName("19. ★ 摘要失敗的文章仍然會出現在列表裡")
+    void items_failedItem_shouldStillBeListed() throws Exception {
+
+        /*
+         * 決定 2。
+         *
+         * API 不該替前端決定「什麼該被看到」，除非有安全理由。
+         *
+         * 濾掉 FAILED 的話：使用者抓了 30 篇卻只看到 25 篇，
+         * 他不會知道另外 5 篇去哪了，只會覺得這個訂閱怪怪的。
+         *
+         * 回傳它們並帶上 status，前端要灰掉還是摺疊是前端的事。
+         */
+        long sourceId = createSource(ownerToken, "有失敗的來源", "https://failed.example.com/rss");
+        long jobId = fetchJobRepository.save(new FetchJob(sourceId)).getId();
+
+        FetchedItem item = saveItem(sourceId, jobId, "摘要失敗的文章", "hash-failed");
+        item.startSummarizing();
+        item.failSummarization(FailureType.PERMANENT, "沒有可用的 API key");
+        fetchedItemRepository.saveAndFlush(item);
+
+        mockMvc.perform(get("/api/v1/sources/" + sourceId + "/items")
+                        .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].status").value("FAILED"))
+                .andExpect(jsonPath("$[0].summary").doesNotExist())
+                .andExpect(jsonPath("$[0].failureReason").value("沒有可用的 API key"));
+    }
+
     // ---------- 輔助方法 ----------
+
+    /** 直接寫一筆文章進資料庫，跳過整條抓取管線。 */
+    private FetchedItem saveItem(long sourceId, long jobId, String title, String hash) {
+
+        FetchedItem item = new FetchedItem(sourceId, jobId, hash,
+                new FetchedArticle(title, "https://example.com/" + hash, "內文", Instant.now()));
+
+        return fetchedItemRepository.saveAndFlush(item);
+    }
 
     private String registerAndLogin(String email) throws Exception {
         String credentials = """

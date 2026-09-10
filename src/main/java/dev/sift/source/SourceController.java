@@ -1,5 +1,6 @@
 package dev.sift.source;
 
+import dev.sift.fetch.dto.FetchedItemResponse;
 import dev.sift.fetch.dto.FetchJobResponse;
 import dev.sift.source.dto.CreateSourceRequest;
 import dev.sift.source.dto.SourceResponse;
@@ -110,5 +111,25 @@ public class SourceController {
         sourceService.delete(userId, id);
 
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * 這個來源抓到的文章，新的在前。
+     *
+     * <p>管線的成果在這裡才第一次對外可見——
+     * 在此之前，抓下來的文章與摘要只存在資料庫裡，沒有任何 API 讀得到。
+     *
+     * <p>回傳不含 {@code rawContent}：那可能好幾 KB，
+     * 而列表上根本顯示不了。想看全文就點 {@code externalUrl} 去看原文。
+     *
+     * @param limit 最多回幾筆。預設 10，超出 1–50 會被夾回範圍內
+     */
+    @GetMapping("/{id}/items")
+    public List<FetchedItemResponse> items(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "10") int limit) {
+
+        return sourceService.findItems(userId, id, Math.clamp(limit, 1, 50));
     }
 }

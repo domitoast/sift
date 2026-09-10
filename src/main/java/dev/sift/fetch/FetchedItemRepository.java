@@ -24,6 +24,34 @@ public interface FetchedItemRepository extends JpaRepository<FetchedItem, Long> 
     List<FetchedItem> findByStatusOrderByCreatedAtAsc(FetchedItemStatus status, Limit limit);
 
     /**
+     * 某個來源抓到的文章，新的在前。
+     *
+     * <p>⚠️ 沒有 userId 條件——{@code fetched_item} 依 ADR-012 只存
+     * {@code source_id}。權限必須由呼叫端先驗證 source 的歸屬。
+     * <b>這個方法不可以被 Controller 直接使用。</b>
+     *
+     * <p><b>⚠️ 方法名字裡不可以有 {@code Id}</b>：
+     * Spring Data 會把 {@code findById...} 的 {@code Id} 解讀成
+     * <b>{@code FetchedItem} 自己的主鍵</b>，不是使用者的 id。
+     * 寫成 {@code findByIdAndSourceId(userId, sourceId)} 會產生
+     *
+     * <pre>WHERE fetched_item.id = ? AND source_id = ?</pre>
+     *
+     * ——那是「找出主鍵剛好等於 userId 的那一篇」，兩件完全不相干的事。
+     * 它會編譯、會啟動、會回傳空陣列，而且沒有任何錯誤訊息。
+     *
+     * <p><b>為什麼排序要有第二個欄位（{@code IdDesc}）</b>：
+     * {@code created_at} 的預設值是 {@code now()}，而 PostgreSQL 的
+     * {@code now()} 回傳的是<b>交易開始的時間</b>，不是當下時間。
+     * 同一個交易裡寫入的多筆資料會拿到<b>一模一樣的時間戳</b>。
+     *
+     * <p>只用 {@code created_at} 排序時，那些資料的先後順序是
+     * <b>未定義</b>的——每次查詢可能不一樣。加上 {@code id} 當第二順位
+     * 才有穩定的結果。
+     */
+    List<FetchedItem> findBySourceIdOrderByCreatedAtDescIdDesc(Long sourceId, Limit limit);
+
+    /**
      * 撈出「可以現在處理」的文章——擁有者必須已經設定 API key。
      *
      * <h2>為什麼要用原生 SQL</h2>

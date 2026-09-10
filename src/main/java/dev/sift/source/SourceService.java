@@ -2,7 +2,9 @@ package dev.sift.source;
 
 import dev.sift.fetch.FeedResolver;
 import dev.sift.fetch.FetchJobRepository;
+import dev.sift.fetch.FetchedItemRepository;
 import dev.sift.fetch.dto.FetchJobResponse;
+import dev.sift.fetch.dto.FetchedItemResponse;
 import dev.sift.source.dto.CreateSourceRequest;
 import org.springframework.data.domain.Limit;
 import dev.sift.source.dto.SourceResponse;
@@ -28,13 +30,15 @@ public class SourceService {
     private final SourceRepository sourceRepository;
     private final FetchJobRepository fetchJobRepository;
     private final FeedResolver feedResolver;
+    private final FetchedItemRepository fetchedItemRepository;
 
     public SourceService(SourceRepository sourceRepository,
                          FetchJobRepository fetchJobRepository,
-                         FeedResolver feedResolver) {
+                         FeedResolver feedResolver, FetchedItemRepository fetchedItemRepository) {
         this.sourceRepository = sourceRepository;
         this.fetchJobRepository = fetchJobRepository;
         this.feedResolver = feedResolver;
+        this.fetchedItemRepository = fetchedItemRepository;
     }
 
     /**
@@ -197,5 +201,30 @@ public class SourceService {
         source.markDeleted();
 
         log.info("訂閱來源刪除成功 sourceId={} userId={}", sourceId, userId);
+    }
+
+    /**
+     * 某個來源抓到的文章，新的在前。
+     *
+     * <p>權限分兩步查，理由與 {@link #findFetchJobs} 相同：
+     * {@code fetched_item} 沒有 {@code user_id}（ADR-012），
+     * 所以沒辦法把權限寫進同一個查詢。
+     *
+     * <p><b>第一步不可以省。</b> 少了它，任何人猜 sourceId
+     * 就能看到別人訂閱了什麼、抓到什麼——那是 IDOR。
+     *
+     * @throws SourceNotFoundException 來源不存在、已刪除，或不屬於這個使用者
+     */
+    @Transactional(readOnly = true)
+    public List<FetchedItemResponse> findItems(Long userId, Long sourceId, int limit) {
+
+        sourceRepository.findByIdAndUserIdAndDeletedAtIsNull(sourceId, userId)
+                .orElseThrow(SourceNotFoundException::new);
+
+        return fetchedItemRepository
+                .findBySourceIdOrderByCreatedAtDescIdDesc(sourceId, Limit.of(limit))
+                .stream()
+                .map(FetchedItemResponse::from)
+                .toList();
     }
 }
