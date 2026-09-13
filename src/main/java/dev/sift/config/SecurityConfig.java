@@ -3,6 +3,7 @@ package dev.sift.config;
 import dev.sift.auth.JwtAuthenticationFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -57,6 +58,18 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/auth/**").permitAll()
                         // 健康檢查：給部署平台與負載平衡器用的，必須公開
                         .requestMatchers("/actuator/health").permitAll()
+                        /*
+                         * 前端頁面本身必須公開——使用者要先看得到登入畫面，
+                         * 才有辦法登入。
+                         *
+                         * ⚠️ 只放行「這一個檔案」，不是整個 static 目錄。
+                         *    寫成 /** 或 /static/** 的話，日後有人往那個目錄
+                         *    放了不該公開的東西，就會跟著外洩。
+                         *
+                         * 頁面公開不代表資料公開：所有 /api/v1 的請求
+                         * 仍然需要帶有效的 token。
+                         */
+                        .requestMatchers(HttpMethod.GET, "/", "/index.html").permitAll()
                         // 其餘一律需要有效身分
                         .anyRequest().authenticated())
 
