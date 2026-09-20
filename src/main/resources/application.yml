@@ -1,3 +1,13 @@
+# Base configuration, tuned for local development: SQL is printed, logging is
+# verbose, health details are exposed.
+#
+# Profiles layer on top of this rather than replacing it:
+#   application-test.yml  activated by @ActiveProfiles("test")
+#   application-prod.yml  activated by SPRING_PROFILES_ACTIVE=prod
+#
+# Each of those lists only what differs, so every setting has exactly one
+# place where it is defined.
+
 spring:
   application:
     name: sift

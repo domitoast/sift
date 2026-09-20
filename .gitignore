@@ -61,3 +61,7 @@ build/
 # They contain real tokens and passwords. Examples worth keeping belong in
 # docs/ with placeholder values.
 /*.json
+
+# Frontend learning notes
+web/REACT_BASICS.md
+web/README.md

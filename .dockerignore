@@ -1,0 +1,33 @@
+# Everything here would otherwise be sent to the Docker daemon as build
+# context: slower builds, and a real risk of baking secrets into an image.
+
+# Secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Build output. The image builds its own; copying a host build in would ship
+# whatever happened to be lying around instead of what this Dockerfile made.
+target/
+web/dist/
+web/node_modules/
+
+# Git history and IDE state
+.git/
+.github/
+.idea/
+.vscode/
+*.iml
+
+# Personal notes
+CLAUDE.md
+LEARNING_ROADMAP.md
+PROJECT_RULES.md
+DEVELOPMENT_WORKFLOW.md
+docs/
+scripts/
+
+# OS cruft
+.DS_Store
+Thumbs.db

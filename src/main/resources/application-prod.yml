@@ -1,0 +1,65 @@
+# Production profile: what changes when this runs as a container rather than
+# on a developer's laptop. Activated by SPRING_PROFILES_ACTIVE=prod, which
+# docker-compose.yml sets.
+#
+# Only the differences belong here. Everything else is inherited from
+# application.yml, so there is one place where each setting is defined.
+#
+# The point of a profile is that these are not things anyone has to remember
+# to change before shipping. A mechanism that depends on remembering will
+# eventually fail, and it will fail on the day someone is in a hurry.
+
+spring:
+  jpa:
+    # The single biggest difference. With this on, an idle instance still
+    # writes hundreds of lines a minute, and a busy one buries every real
+    # error under formatted SQL.
+    #
+    # Formatting those strings also costs CPU on every query, for output
+    # nobody reads.
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+
+management:
+  endpoint:
+    health:
+      # never, not always. "always" exposes database connectivity, disk space
+      # and connection details to anyone who can reach /actuator/health — and
+      # that endpoint is public, because load balancers have to poll it.
+      #
+      # An unauthenticated caller should learn whether the service is up, and
+      # nothing else.
+      show-details: never
+
+server:
+  error:
+    # Stack traces describe the internals: class names, framework versions,
+    # the shape of the code. That is reconnaissance for an attacker and
+    # useless to a legitimate user.
+    #
+    # The information is not lost, it just goes to the log instead of the
+    # response.
+    include-stacktrace: never
+    include-message: never
+
+sift:
+  summarize:
+    # Repeated from .env on purpose. The fake summarizer returns a substring
+    # instead of a summary, so reaching it in a deployed environment would be
+    # a silent correctness bug rather than a visible failure.
+    #
+    # Defence in depth: if the environment variable is ever missing or wrong,
+    # this profile still holds the line.
+    allow-fake: false
+
+logging:
+  level:
+    # INFO, not DEBUG. DEBUG is for reading someone's thought process while
+    # developing; in a deployed service it is noise that hides the signal.
+    dev.sift: INFO
+    org.flywaydb: INFO
+    # Hibernate's own SQL logger, separate from spring.jpa.show-sql above.
+    # Leaving it at DEBUG would undo everything this file does.
+    org.hibernate.SQL: WARN

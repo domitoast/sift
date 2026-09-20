@@ -1,80 +1,170 @@
-# =============================================================================
-# CI：每次 push 自動在一台乾淨的機器上跑完整測試
+# Test on every push; publish an image only from main.
 #
-# 【為什麼需要】
+# Two jobs rather than one, because they answer different questions:
 #
-# 在這之前，品質保證靠的是「我記得跑 mvnw test」。
-# 任何靠「記得」的機制遲早會失效——不是因為人懶，是因為趕。
+#   test   is this change correct?
+#   image  can this change be shipped?
 #
-# CI 還會抓到一類本機永遠抓不到的問題：「在我電腦上可以跑」。
-# 因為它每次都是全新的機器，什麼都沒裝。
-#   - Day 12：mvn 只存在於 IntelliJ 裡，README 的指令對別人是假的
-#   - Day 18：SIFT_ENCRYPTION_SECRET 設在 IDE 裡，沒寫進任何文件
-#
-# 【檔案位置是固定的】
-#
-# 必須放在 .github/workflows/ 底下，副檔名 .yml 或 .yaml。
-# 檔名本身自由（ci.yml 只是慣例）。
-# =============================================================================
+# Splitting them means a failing test never produces an image, and the image
+# job's logs are not buried under 221 test results.
 
 name: CI
 
-# 觸發條件。目前只有一個人一個分支，push 就夠了。
-# 日後開始用 branch + PR 的話，再加 pull_request。
-on: push
+on:
+  push:
+  pull_request:
+
+# Cancel a run when a newer commit arrives on the same branch. Without this,
+# pushing three times in a minute runs three full builds and you wait for the
+# answer to a question you already changed.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+
+  # ---------------------------------------------------------------------------
   test:
-    # 每次都是全新的 Ubuntu，跑完就丟掉。
-    # 「乾淨的機器跑得起來」才代表別人也跑得起來。
+  # ---------------------------------------------------------------------------
     runs-on: ubuntu-latest
 
-    # -------------------------------------------------------------------------
-    # 這裡原本有一段 services.postgres（image、env、ports、health-cmd 共 30 行）。
-    #
-    # 【為什麼刪掉】
-    #
-    # Day 22 測試改用 Testcontainers 之後，資料庫由測試自己啟動：
-    # PostgresTestBase 會起一個 postgres:17-alpine 容器，
-    # @ServiceConnection 把隨機 port 的連線資訊注入 Spring。
-    #
-    # 留著 service 的話會變成「兩個 PostgreSQL 同時在跑，其中一個沒人用」，
-    # 而且它的帳密必須跟 application-test.yml 手動保持一致——
-    # 那正是 Testcontainers 要消除的那種「靠人記得同步」的設定。
-    #
-    # 附帶好處：CI 環境與本機環境從此是同一套機制。
-    # 以前是「本機連自己的 Docker，CI 連 service 容器」，兩邊不一樣，
-    # 出問題時得先問「這是環境差異還是真的 bug」。
-    #
-    # ubuntu-latest 的 runner 本身就有 Docker daemon，Testcontainers 直接可用。
-    # -------------------------------------------------------------------------
-
     steps:
-      # uses = 用別人寫好的動作。
-      # checkout 把 repo 抓到這台機器上——沒有它，機器上連 mvnw 都沒有。
-      #
-      # ⚠️ 版本要寫死（@v5 而不是 @main）。
-      #    寫 @main 的話，別人改了他們的程式碼，你的 CI 會在你什麼都沒動的
-      #    情況下突然壞掉——而且你查不到是誰改的。
-      - name: 取得程式碼
+      # Without checkout the runner does not even have mvnw.
+      - name: Check out
         uses: actions/checkout@v5
 
-      - name: 安裝 Java 21
+      - name: Set up Java 21
         uses: actions/setup-java@v5
         with:
-          # Temurin 是最常用的免費 JDK 發行版
           distribution: temurin
-          # 與 pom.xml 的 <java.version>21</java.version> 一致
           java-version: '21'
-          # 把下載過的函式庫快取起來。
-          # 沒有它，每次 CI 都要重新下載 Spring、Hibernate、Rome…約多花 2-3 分鐘。
+          # Caches ~/.m2. Saves two to three minutes of re-downloading Spring,
+          # Hibernate and Rome on every run.
           cache: maven
 
-      # run = 直接執行一個指令。
+      # No postgres service here on purpose. Testcontainers starts its own
+      # database from PostgresTestBase, and the runner already has a Docker
+      # daemon. A service container would be a second, unused PostgreSQL whose
+      # credentials had to be kept in sync with application-test.yml by hand.
       #
-      # ./mvnw 而不是 .\mvnw.cmd —— CI 跑的是 Linux。
-      # 這是 Day 13 產生 Maven Wrapper 的回報：不需要先安裝 Maven。
-      #
-      # --batch-mode 關掉下載進度條。那東西在終端機好看，在 log 裡是幾千行垃圾。
-      - name: 執行測試
+      # It also means CI and a laptop run the tests the same way, so a failure
+      # is never "is this an environment difference or a real bug?".
+      - name: Run tests
         run: ./mvnw --batch-mode test
+
+      # Surefire reports are the only way to see which test failed after the
+      # runner is gone. if: always() matters: on success this is noise, but on
+      # failure it is the entire point, and the default only uploads on success.
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  image:
+  # ---------------------------------------------------------------------------
+    # Only after tests pass. This one line is what makes the pipeline a gate
+    # rather than a pair of unrelated scripts.
+    needs: test
+
+    # Only from main. Feature branches get tested, not published: a registry
+    # full of images from half-finished branches is a registry nobody trusts.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      # Required to push to GitHub Container Registry. Granted per job rather
+      # than per workflow, so the test job cannot publish anything.
+      packages: write
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      # Enables build cache and multi-platform builds.
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # GITHUB_TOKEN is minted per run and expires with it, so there is no
+      # long-lived credential to leak or rotate.
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Produces the tags and OCI labels. Every image ends up carrying the
+      # commit it was built from, which is what makes "which version is
+      # running?" answerable during an incident.
+      - name: Derive tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=long
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Layer cache stored in GitHub Actions' own cache. Without it every
+          # run re-downloads every Maven and npm dependency from scratch.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Building an image proves it compiles, not that it starts. A missing
+      # environment variable or a broken entrypoint only shows up at runtime,
+      # and finding that out in production is finding it out too late.
+      - name: Smoke test the image
+        run: |
+          docker network create sift-ci
+
+          docker run -d --name db --network sift-ci \
+            -e POSTGRES_DB=sift -e POSTGRES_USER=sift -e POSTGRES_PASSWORD=ci-only \
+            postgres:17-alpine
+
+          # Wait for the database rather than sleeping a fixed amount: a sleep
+          # is either too short on a slow runner or wasted time on a fast one.
+          for i in $(seq 1 30); do
+            docker exec db pg_isready -U sift -d sift && break
+            sleep 2
+          done
+
+          # Same profile the compose file uses. Smoke-testing a different
+          # configuration than the one that ships would defeat the point.
+          docker run -d --name app --network sift-ci -p 8080:8080 \
+            -e SPRING_PROFILES_ACTIVE=prod \
+            -e SIFT_DB_HOST=db \
+            -e SIFT_DB_NAME=sift \
+            -e SIFT_DB_USER=sift \
+            -e SIFT_DB_PASSWORD=ci-only \
+            -e SIFT_JWT_SECRET=Y2ktb25seS1qd3Qtc2VjcmV0LWxvbmctZW5vdWdoLWZvci1oczUxMi1zaWduaW5nLXBhZGRpbmctcGFkZGluZw== \
+            -e SIFT_ENCRYPTION_SECRET=Y2ktb25seS1lbmNyeXB0aW9uLWtleS0zMmI= \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+          for i in $(seq 1 45); do
+            if curl -fsS http://localhost:8080/actuator/health | grep -q '"status":"UP"'; then
+              echo "healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "did not become healthy"
+          docker logs app
+          exit 1

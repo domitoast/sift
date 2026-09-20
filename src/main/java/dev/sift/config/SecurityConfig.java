@@ -38,7 +38,15 @@ public class SecurityConfig {
 
                         .requestMatchers("/actuator/health").permitAll()
 
-                        .requestMatchers(HttpMethod.GET, "/", "/index.html").permitAll()
+                        // The built frontend. Vite emits hashed filenames under
+                        // /assets/, so the pattern has to cover the directory
+                        // rather than individual files.
+                        //
+                        // GET only: these are static files, and a POST to one
+                        // has no legitimate meaning.
+                        .requestMatchers(HttpMethod.GET,
+                                "/", "/index.html", "/assets/**", "/favicon.svg")
+                        .permitAll()
 
                         .anyRequest().authenticated())
 

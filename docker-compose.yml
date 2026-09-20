@@ -1,66 +1,92 @@
-# Sift 開發環境
+# Runs the whole thing: database plus application.
 #
-# 啟動：docker compose up -d
-# 停止：docker compose down          （資料保留）
-# 停止並清空資料：docker compose down -v
-# 查看日誌：docker compose logs -f postgres
-# 進入資料庫：docker compose exec postgres psql -U sift -d sift
+#   docker compose up -d          start
+#   docker compose up -d postgres start the database only (for local development)
+#   docker compose logs -f app    follow the application log
+#   docker compose down           stop, keeping data
+#   docker compose down -v        stop and wipe the database
+#
+# Values come from .env, which compose reads automatically. Copy .env.example
+# to .env first.
 
 services:
 
   postgres:
-    # image 名稱與版本標籤。
-    # 一律鎖定明確版本（17-alpine），不要用 latest——
-    # latest 會隨時間變動，某天重建環境就換成不同版本，行為可能不一致。
-    # alpine 是精簡版 Linux，映像檔小很多（約 80MB vs 400MB）。
+    # Pinned, never :latest. A floating tag means rebuilding the environment
+    # six months from now silently gives you a different database version.
     image: postgres:17-alpine
-
-    # 容器名稱。不指定的話 Docker 會自動生成像 sift-postgres-1 這種名字。
     container_name: sift-postgres
-
-    # 容器意外停止時自動重啟，但你手動停止時不會。
     restart: unless-stopped
 
     environment:
-      # postgres 這個 image 支援的環境變數，啟動時會依此建立資料庫與帳號。
-      #
-      # ${...} 的值來自同目錄的 .env 檔——docker compose 會自動讀取它，
-      # 不需要任何額外設定或外掛。
-      #
-      # 冒號後面沒有預設值，代表「.env 裡沒設就報錯」。
-      # 這是刻意的：寧可啟動失敗，也不要偷偷用一個弱密碼跑起來。
-      POSTGRES_DB: ${SIFT_DB_NAME:?SIFT_DB_NAME 未設定，請複製 .env.example 為 .env}
-      POSTGRES_USER: ${SIFT_DB_USER:?SIFT_DB_USER 未設定}
-      POSTGRES_PASSWORD: ${SIFT_DB_PASSWORD:?SIFT_DB_PASSWORD 未設定}
+      # No default after the colon: start-up fails if the variable is missing.
+      # Better than quietly coming up with a weak password.
+      POSTGRES_DB: ${SIFT_DB_NAME:?SIFT_DB_NAME is not set; copy .env.example to .env}
+      POSTGRES_USER: ${SIFT_DB_USER:?SIFT_DB_USER is not set}
+      POSTGRES_PASSWORD: ${SIFT_DB_PASSWORD:?SIFT_DB_PASSWORD is not set}
 
     ports:
-      # 格式是「你電腦的 port : 容器裡的 port」。
-      # 5432 是 PostgreSQL 的預設 port。
-      # 如果你電腦上已經有東西佔用 5432，把左邊改成 5433 即可，
-      # 容器內部不受影響。
+      # host:container. Exposed so IntelliJ and psql can reach it directly.
       - "5432:5432"
 
     volumes:
-      # 把容器內的資料目錄對應到一個由 Docker 管理的具名 volume。
-      # 沒有這行的話，容器一刪除，資料庫內容全部消失。
+      # Without this the data lives in the container's writable layer and
+      # disappears with the container.
       - postgres_data:/var/lib/postgresql/data
 
     healthcheck:
-      # 定期檢查資料庫是否真的可以接受連線。
-      # 這很重要：容器「啟動」不等於資料庫「準備好」——
-      # PostgreSQL 第一次啟動要初始化，大約需要幾秒。
-      # 之後應用程式容器可以用 depends_on + condition 等它就緒再啟動。
-      # 注意 $$ 的寫法：compose 看到 $$ 會還原成單一個 $ 再交給容器，
-      # 因此這個變數是在「容器內部」求值的。
-      # 容器內存在的是 POSTGRES_USER / POSTGRES_DB（上面 environment 設的），
-      # 而不是 SIFT_ 開頭那些——那些只存在於你的電腦上。
+      # "Container started" is not "database accepts connections": the first
+      # start has to initialise the data directory, which takes a few seconds.
+      #
+      # $$ becomes a single $ inside the container, so these resolve there,
+      # against POSTGRES_USER rather than the SIFT_ variables on the host.
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s      # 每 5 秒檢查一次
-      timeout: 3s       # 單次檢查超過 3 秒視為失敗
-      retries: 5        # 連續失敗 5 次才標記為 unhealthy
-      start_period: 10s # 啟動後前 10 秒的失敗不計入
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sift:local
+    container_name: sift-app
+    restart: unless-stopped
+
+    depends_on:
+      postgres:
+        # service_healthy, not service_started. Waiting only for "started"
+        # means Flyway can open a connection before the server is listening,
+        # and the application dies on boot with a stack trace that looks like
+        # a bug rather than a race.
+        condition: service_healthy
+
+    environment:
+      # Layers application-prod.yml on top of application.yml: SQL logging off,
+      # health details hidden, stack traces kept out of responses.
+      #
+      # application.yml on its own is tuned for a laptop, and a container is
+      # not a laptop.
+      SPRING_PROFILES_ACTIVE: prod
+
+      # postgres, not localhost. Inside the compose network, localhost is this
+      # container; the database answers to its service name.
+      SIFT_DB_HOST: postgres
+      SIFT_DB_PORT: 5432
+      SIFT_DB_NAME: ${SIFT_DB_NAME}
+      SIFT_DB_USER: ${SIFT_DB_USER}
+      SIFT_DB_PASSWORD: ${SIFT_DB_PASSWORD}
+
+      SIFT_JWT_SECRET: ${SIFT_JWT_SECRET}
+      SIFT_ENCRYPTION_SECRET: ${SIFT_ENCRYPTION_SECRET}
+
+      # Defaults to false anyway; stated explicitly because leaving the fake
+      # summarizer reachable in a deployed environment would be a real bug.
+      SIFT_SUMMARIZE_ALLOW_FAKE: "false"
+
+    ports:
+      - "8080:8080"
 
 volumes:
-  # 宣告具名 volume。實際檔案由 Docker 管理，
-  # 位置在 Docker 的內部儲存區，不在專案資料夾裡。
   postgres_data:

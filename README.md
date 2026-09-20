@@ -79,6 +79,29 @@ openssl rand -base64 32
 > 後者外洩代表所有使用者的 API key 變明文——影響範圍不同，
 > 而且輪替其中一把時不該連帶弄壞另一把。
 
+### 用 Docker 跑（最快）
+
+```bash
+docker compose up -d
+```
+
+一個指令把資料庫與應用程式都叫起來，前端已經打包進同一個 image。
+打開 http://localhost:8080 即可。
+
+```bash
+docker compose logs -f app     # 看日誌
+docker compose down            # 停止（資料保留）
+docker compose down -v         # 停止並清空資料庫
+```
+
+也可以直接用 CI 建好的 image，不必自己 build：
+
+```bash
+docker pull ghcr.io/domitoast/sift:latest
+```
+
+### 開發模式（改程式碼即時生效）
+
 然後一個指令把整套叫起來（資料庫 + 後端 + 前端）：
 
 ```powershell
