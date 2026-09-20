@@ -103,7 +103,14 @@ Write-Host "`n[1/3] 資料庫…" -ForegroundColor Cyan
 
 Push-Location $root
 try {
-    docker compose up -d | Out-Null
+    # ⚠️ 只起 postgres，不要起整個 compose。
+    #
+    # docker-compose.yml 現在有兩個 service：postgres 和 app。
+    # 不指定 service 的話會把容器化的 app 也叫起來，它佔住 8080，
+    # 然後下面的 mvnw spring-boot:run 就會 port already in use。
+    #
+    # 開發模式要的是「資料庫在容器裡，程式在你機器上」。
+    docker compose up -d postgres | Out-Null
 } finally {
     Pop-Location
 }
@@ -246,3 +253,4 @@ foreach ($p in @($backend, $frontend)) {
 }
 
 Write-Host "已停止。資料庫還在跑——要一起停：docker compose down" -ForegroundColor Green
+Write-Host "（若之前用 docker compose 跑過整套，app 容器可能還佔著 8080：docker compose stop app）" -ForegroundColor DarkGray

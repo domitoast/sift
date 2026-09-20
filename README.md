@@ -6,6 +6,52 @@
 
 ---
 
+## 系統組成
+
+```mermaid
+flowchart LR
+    U(("使用者<br/>瀏覽器"))
+
+    subgraph docker["docker compose"]
+        APP["<b>Sift</b><br/>Spring Boot 3.5 / Java 21<br/>內含 build 好的 React 前端"]
+        DB[("PostgreSQL 17<br/>schema 由 Flyway 管理")]
+    end
+
+    RSS["訂閱來源<br/>RSS / Atom"]
+    LLM["Gemini API<br/>使用者自帶金鑰"]
+
+    U -->|":8080<br/>網頁與 API 同一個來源"| APP
+    APP <--> DB
+    APP -.->|"每天 06:00<br/>或手動觸發"| RSS
+    APP -.->|"每 30 秒撈待處理"| LLM
+```
+
+虛線是**對外的網路呼叫**——兩條都有逾時上限、失敗分類與重試策略，
+而且都不在資料庫交易裡面（交易裡做網路 I/O 會把連線池吃光）。
+
+## 資料流
+
+一篇文章從 RSS 到知識庫會經過四張表，每一段只認得前一段：
+
+```mermaid
+flowchart TD
+    S["<b>source</b><br/>訂閱來源"]
+    J["<b>fetch_job</b><br/>一次抓取 = 一張工作卡<br/>PENDING → RUNNING → SUCCESS / FAILED"]
+    I["<b>fetched_item</b><br/>抓到的文章<br/>NEW → SUMMARIZING → READY"]
+    D["<b>document</b><br/>知識庫"]
+
+    S -->|"排程或手動<br/>丟進背景執行緒池"| J
+    J -->|"下載 → 解析 → 去重<br/>內容雜湊擋重複"| I
+    I -->|"呼叫 LLM 產生摘要<br/>失敗會 backoff 重試"| I
+    I -->|"使用者按「收藏」"| D
+```
+
+**四個階段互不呼叫，只透過資料庫的狀態欄位溝通。**
+任何一段掛掉，其他段照常運作，重啟後從資料庫接著做——
+代價是需要一支排程把「開始了但永遠不會結束」的任務收拾掉。
+
+---
+
 ## 現在能做什麼
 
 **知識庫**
@@ -79,19 +125,35 @@ openssl rand -base64 32
 > 後者外洩代表所有使用者的 API key 變明文——影響範圍不同，
 > 而且輪替其中一把時不該連帶弄壞另一把。
 
-### 用 Docker 跑（最快）
+---
+
+有**兩種跑法**，用途不同。兩者都會佔用 8080，所以一次只能跑一種。
+
+| | 用途 | 開哪個網址 |
+|---|---|---|
+| **A. 容器模式** | 拿給別人跑、驗證打包對不對 | http://localhost:8080 |
+| **B. 開發模式** | 寫程式。前端熱更新、後端可下中斷點 | http://localhost:5173 |
+
+---
+
+### A. 容器模式
 
 ```bash
 docker compose up -d
 ```
 
-一個指令把資料庫與應用程式都叫起來，前端已經打包進同一個 image。
-打開 http://localhost:8080 即可。
+一個指令把資料庫與應用程式都叫起來。**前端已經打包進同一個 image**，
+由 Spring Boot 當靜態檔提供，所以只有 8080 一個 port。
+
+打開 http://localhost:8080 就是完整的網站。
 
 ```bash
 docker compose logs -f app     # 看日誌
-docker compose down            # 停止（資料保留）
-docker compose down -v         # 停止並清空資料庫
+docker compose ps              # 兩個容器的狀態
+docker compose stop app        # 只停應用程式（資料庫留著給開發模式用）
+docker compose down            # 全停（資料保留）
+docker compose down -v         # 全停並清空資料庫
+docker compose up -d --build   # 改過程式碼之後要加 --build
 ```
 
 也可以直接用 CI 建好的 image，不必自己 build：
@@ -100,33 +162,42 @@ docker compose down -v         # 停止並清空資料庫
 docker pull ghcr.io/domitoast/sift:latest
 ```
 
-### 開發模式（改程式碼即時生效）
+容器模式會帶 `SPRING_PROFILES_ACTIVE=prod`：關掉 SQL log、隱藏健康檢查細節、
+不回傳 stack trace。開發模式不受影響。
 
-然後一個指令把整套叫起來（資料庫 + 後端 + 前端）：
+---
+
+### B. 開發模式
 
 ```powershell
 .\scripts\dev.ps1
 ```
 
-它會依序：載入 `.env` → 起 Postgres 並等到 healthy → 必要時 `npm install`
+它會：載入 `.env` → **只起 postgres 容器**並等到 healthy → 必要時 `npm install`
 → 開兩個視窗跑後端與前端 → 等 `/actuator/health` 回 200 才告訴你可以用了。
 
 | | |
 |---|---|
-| 前端 | http://localhost:5173 |
-| 後端 | http://localhost:8080 |
+| 前端 | http://localhost:5173 ← **開這個** |
+| 後端 API | http://localhost:8080 |
 
-回到腳本的視窗按 Enter 就會停掉前後端（資料庫留著，要停用 `docker compose down`）。
+兩個 port 是不同來源，瀏覽器本來會擋跨來源請求；
+`vite.config.js` 的 proxy 把 `/api` 轉給 8080，所以瀏覽器以為只跟 5173 說話。
+
+回到腳本的視窗按 Enter 停掉前後端（資料庫留著）。
+
+> ⚠️ 如果之前跑過容器模式，先 `docker compose stop app`，
+> 否則那個容器佔著 8080，後端會起不來。
 
 <details>
-<summary>手動啟動（非 Windows，或想知道它實際做了什麼）</summary>
+<summary>手動啟動（非 Windows，或想知道腳本實際做了什麼）</summary>
 
 ```bash
-# 1. 起資料庫，等它 healthy
-docker compose up -d
+# 1. 只起資料庫，等它 healthy
+docker compose up -d postgres
 
 # 2. 後端（Flyway 會自動建表）
-#    ⚠️ .env 裡的變數要先進到環境裡——Spring Boot 不會自己讀 .env
+#    ⚠️ .env 的變數要先進到環境裡——Spring Boot 不會自己讀 .env
 export $(grep -v '^#' .env | xargs)
 ./mvnw spring-boot:run
 
@@ -135,20 +206,24 @@ cd web && npm install && npm run dev
 ```
 </details>
 
-確認活著：
+---
 
-```bash
-curl -i http://localhost:8080/actuator/health
-```
-
-跑測試（需要 Docker 在跑，不需要先 `docker compose up`）：
+### 測試
 
 ```bash
 ./mvnw test
 ```
 
-測試用的 PostgreSQL 由 Testcontainers 自動啟動，測完自動刪除，
+需要 Docker 在跑，但**不需要**先 `docker compose up`——
+測試用的 PostgreSQL 由 Testcontainers 自己啟動，測完自動刪除，
 不會碰到開發用的資料庫。第一次跑會下載 `postgres:17-alpine` 映像檔。
+
+### 其他
+
+```bash
+curl -i http://localhost:8080/actuator/health   # 確認活著
+.\scripts\reset-data.ps1                        # 清空文章資料，保留帳號與訂閱
+```
 
 ---
 

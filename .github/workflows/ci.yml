@@ -61,7 +61,7 @@ jobs:
       # failure it is the entire point, and the default only uploads on success.
       - name: Upload test reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: surefire-reports
           path: target/surefire-reports/
@@ -130,6 +130,11 @@ jobs:
       # Building an image proves it compiles, not that it starts. A missing
       # environment variable or a broken entrypoint only shows up at runtime,
       # and finding that out in production is finding it out too late.
+      #
+      # The keys below are throwaway values, decoded and checked for length:
+      # the JWT one is 64 bytes for HS512, the encryption one is exactly 32
+      # for AES-256. A wrong length here fails at startup, and the symptom is
+      # a health check that simply never turns green.
       - name: Smoke test the image
         run: |
           docker network create sift-ci
@@ -154,7 +159,7 @@ jobs:
             -e SIFT_DB_USER=sift \
             -e SIFT_DB_PASSWORD=ci-only \
             -e SIFT_JWT_SECRET=Y2ktb25seS1qd3Qtc2VjcmV0LWxvbmctZW5vdWdoLWZvci1oczUxMi1zaWduaW5nLXBhZGRpbmctcGFkZGluZw== \
-            -e SIFT_ENCRYPTION_SECRET=Y2ktb25seS1lbmNyeXB0aW9uLWtleS0zMmI= \
+            -e SIFT_ENCRYPTION_SECRET=Y2ktb25seS1lbmNyeXB0aW9uLWtleS1leGFjdGx5MzI= \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
           for i in $(seq 1 45); do
@@ -165,6 +170,13 @@ jobs:
             sleep 2
           done
 
-          echo "did not become healthy"
+          # Everything needed to tell "crashed on boot" from "still starting"
+          # apart, in one place. Without the container state, an empty log
+          # looks the same as a container that never started.
+          echo "::error::the image did not become healthy"
+          docker ps -a
+          echo "--- app ---"
           docker logs app
+          echo "--- db ---"
+          docker logs db --tail 20
           exit 1
