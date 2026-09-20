@@ -214,6 +214,61 @@
             <scope>test</scope>
         </dependency>
 
+        <!--
+            ===================================================================
+            Testcontainers：測試時自動起一個乾淨的 PostgreSQL 容器
+            ===================================================================
+
+            【解決什麼問題】
+
+            在此之前，application-test.yml 連的是 localhost:5432/sift，
+            也就是「跟開發完全同一個資料庫」。後果有三：
+
+              1. 污染      162 個測試建立的假 user / source / fetched_item
+                          全部留在開發資料表裡，分不出哪筆是自己建的
+              2. 順序相依  上一輪留下的資料會讓下一輪的 count 斷言失敗（flaky test）
+              3. 不能並行  一邊用瀏覽器測前端、一邊跑測試，兩邊互相踩
+
+            【改成什麼】
+
+            每次跑測試開一個 postgres:17-alpine 容器，Flyway 在空白的容器上
+            跑完 V1～V7，測完容器連同資料一起消失。開發用的 sift 資料庫不被碰到。
+
+            【代價】
+
+            每次跑測試多 5～10 秒（拉容器、等 health check）。
+            而且測試從此需要 Docker 在跑——但本來就需要，沒有實質改變。
+
+            版本由 spring-boot-starter-parent 統一管理，這裡不寫 version。
+        -->
+
+        <!--
+            提供 @ServiceConnection：把容器實際的 url / username / password
+            自動餵給 Spring，蓋掉 application.yml 的設定。
+
+            沒有它的話，容器的 port 是隨機的（為了避免撞到本機的 5432），
+            就得自己寫 @DynamicPropertySource 手動組字串。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- PostgreSQL 專用的容器類別 PostgreSQLContainer -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Testcontainers 與 JUnit 5 的整合 -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
 
     <build>

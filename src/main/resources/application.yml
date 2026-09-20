@@ -2,69 +2,27 @@ spring:
   application:
     name: sift
 
-  # ---------------------------------------------------------------
-  # 資料庫連線
-  #
-  # 這裡是「專案裡唯一跟資料庫有關的東西」——一個網路地址。
-  # 資料庫本身跑在 Docker 容器裡，與這個專案完全分離。
-  #
-  # localhost:5432 對應 docker-compose.yml 裡的 ports 設定。
-  # 若當初把 port 改成 5433，這裡也要一起改。
-  # ---------------------------------------------------------------
   datasource:
-    # ${VAR} 讀取環境變數。冒號後面是「找不到時的預設值」。
-    #
-    # 注意 password 刻意「不給預設值」——找不到就讓啟動失敗。
-    # 這是 fail fast：寧可現在爆，也不要用一個錯誤的密碼跑起來，
-    # 然後在某個沒人注意的角落連線失敗。
-    #
-    # 帳號與資料庫名稱給預設值是可以的，它們不是機密。
+    # No default for the password: failing to start beats starting with a wrong one.
     url: jdbc:postgresql://${SIFT_DB_HOST:localhost}:${SIFT_DB_PORT:5432}/${SIFT_DB_NAME:sift}
     username: ${SIFT_DB_USER:sift}
     password: ${SIFT_DB_PASSWORD}
     hikari:
-      # HikariCP 是 Spring Boot 預設的連線池（connection pool）。
-      # 連線池的作用：預先建立幾條資料庫連線重複使用，
-      # 因為「建立連線」很慢（要 TCP 握手、認證），每次查詢都新建會很浪費。
       maximum-pool-size: 10
-      # 取得連線的等待上限。超過就丟例外，而不是無限等待。
-      connection-timeout: 10000  # 10 秒
+      connection-timeout: 10000
 
   jpa:
     hibernate:
-      # validate：啟動時只「檢查」Entity 與資料表結構是否相符，絕不自動修改資料庫。
-      #
-      # 千萬不要用 update 或 create——那會讓 Hibernate 依 Entity 自動改結構，
-      # 可能直接刪掉欄位與資料。正式環境用它是重大事故的來源。
-      # 資料庫結構一律由 Flyway 管理。
+      # validate, never update: the schema is owned by Flyway.
       ddl-auto: validate
-
-    # 開發時把 Hibernate 產生的 SQL 印出來，方便理解它實際做了什麼。
-    # 第 8 天觀察 N+1 查詢問題時，這個設定是關鍵。
     show-sql: true
     properties:
       hibernate:
         format_sql: true
-
-    # open-in-view 預設是 true，但應該關掉。
-    #
-    # 它會讓資料庫連線一直開著直到 HTTP 回應送出，
-    # 導致連線被長時間佔用，高流量時連線池會耗盡。
-    # 它還會讓 lazy loading 在 Controller 層意外生效，
-    # 掩蓋掉本來應該在 Service 層就發現的查詢問題。
+    # Off, so a lazy load outside the service layer fails loudly instead of
+    # silently issuing queries while the view renders.
     open-in-view: false
 
-  # ---------------------------------------------------------------
-  # 分頁的預設值與上限
-  #
-  # max-page-size 是必要的防護：
-  # 沒有它，任何人送 ?size=999999999 就等於要求「回傳全部」，
-  # 分頁形同不存在。Spring 的預設上限是 2000，對本專案仍然太大。
-  #
-  # one-indexed-parameters 保持 false（預設）：
-  # 第一頁是 page=0。改成 true 會讓程式碼與 API 的頁碼定義不一致，
-  # 反而更容易搞混。
-  # ---------------------------------------------------------------
   data:
     web:
       pageable:
@@ -72,18 +30,9 @@ spring:
         max-page-size: 100
 
   flyway:
-    # 啟動時自動執行 src/main/resources/db/migration 底下尚未執行過的 migration。
     enabled: true
-    # 若資料庫已有資料表但沒有 flyway_schema_history，
-    # 是否視為「基準版本」而非報錯。我們從空資料庫開始，設 false 較嚴謹。
     baseline-on-migrate: false
 
-# ---------------------------------------------------------------
-# Actuator：系統健康檢查
-#
-# 只開放 health 這一個 endpoint。
-# 預設會開放不少內部資訊的 endpoint，正式環境應逐一評估後才開放。
-# ---------------------------------------------------------------
 management:
   endpoints:
     web:
@@ -91,160 +40,70 @@ management:
         include: health
   endpoint:
     health:
-      show-details: always   # 開發時顯示細節（含資料庫連線狀態）
+      show-details: always
 
 logging:
   level:
-    # 顯示 Flyway 的執行過程，方便確認 migration 有沒有跑。
     org.flywaydb: INFO
     dev.sift: DEBUG
 
-# ---------------------------------------------------------------
-# 本應用程式自訂的設定
-#
-# 這一區不是 Spring 定義的，是我們自己的。
-# 會由 dev.sift.config.JwtProperties 讀取成型別安全的物件。
-# ---------------------------------------------------------------
 sift:
   jwt:
-    # ⚠️ 不給預設值。找不到就啟動失敗。
-    #
-    # 若給了預設值（例如 "default-secret"），最糟的情況是：
-    # 部署到正式環境時忘了設環境變數，系統照樣啟動，
-    # 而且用一把所有人都知道的鑰匙在簽發 token。
-    # 這種錯誤不會有任何警告，直到被入侵才發現。
     secret: ${SIFT_JWT_SECRET}
     access-token-ttl-minutes: ${SIFT_JWT_ACCESS_TTL_MINUTES:15}
     refresh-token-ttl-days: ${SIFT_JWT_REFRESH_TTL_DAYS:7}
 
-  # ---------------------------------------------------------------
-  # 加密（ADR-003：使用者的 LLM API key 必須加密後入庫）
-  # ---------------------------------------------------------------
   encryption:
-    # ⚠️ 不給預設值。找不到就啟動失敗，理由同 jwt.secret。
-    #
-    # Base64 編碼的 256-bit 金鑰。產生方式（PowerShell）：
-    #   $b = New-Object byte[] 32
-    #   [Security.Cryptography.RNGCryptoServiceProvider]::new().GetBytes($b)
-    #   [Convert]::ToBase64String($b)
-    #
-    # 【為什麼要跟 jwt.secret 分開，不共用一把】
-    #
-    # 兩把鑰匙的用途、風險與生命週期都不同：
-    #   jwt.secret        簽章用，外洩 → 攻擊者可以偽造 token
-    #   encryption.secret 加密用，外洩 → 所有使用者的 API key 變明文
-    #
-    # 而且 jwt.secret 有機會需要輪替（例如懷疑外洩時），
-    # 但輪替它不應該連帶讓所有人的 API key 解不開。
-    #
-    # 一把鑰匙只做一件事，出事時的影響範圍才控制得住。
+    # Separate from the JWT secret on purpose: the two have different blast
+    # radiuses, and rotating one must not break the other.
     secret: ${SIFT_ENCRYPTION_SECRET}
 
-  # ---------------------------------------------------------------
-  # 排程
-  # ---------------------------------------------------------------
   scheduling:
-    # 所有排程的總開關（抓取、refresh token 清除）。
-    # 測試環境設 false，整個排程機制不會被建立。
+    # Master switch for every scheduled task. Off under the test profile.
     enabled: ${SIFT_SCHEDULING_ENABLED:true}
 
   cleanup:
-    # 清除過期 refresh token 的時間。
-    #
-    # Spring 的 cron 是六個欄位，比 Linux 多一個「秒」：
-    #   秒 分 時 日 月 星期
-    #   0  0  3  *  *  *     → 每天 03:00:00
-    #
-    # 挑凌晨是因為這是後台維護工作，不該和使用者搶資源。
     refresh-token-cron: ${SIFT_CLEANUP_CRON:0 0 3 * * *}
 
   fetch:
-    # ⚠️ 是否允許連到內部位址（loopback、內網、雲端 metadata）。
-    #
-    # 正式環境一律 false。設為 true 等同關閉 SSRF 防護——
-    # 使用者填 http://169.254.169.254/ 就能讓伺服器去讀雲端憑證。
-    #
-    # 存在的唯一理由是測試：測試用的假伺服器只能架在 localhost，
-    # 而 localhost 正是要擋的東西。
-    #
-    # 設為 true 時 FetchClient 會在啟動 log 印出警告。
+    # Allows outbound requests to loopback and private ranges. Must stay false
+    # in production: true disables SSRF protection entirely.
     allow-internal-address: ${SIFT_FETCH_ALLOW_INTERNAL:false}
-
-    # 建立連線的上限。對方防火牆把封包丟掉時，靠它脫身。
     connect-timeout: ${SIFT_FETCH_CONNECT_TIMEOUT:5s}
-
-    # 整個請求的上限（含讀取回應）。擋 slowloris：連得上但每秒吐一個位元組。
-    # ⚠️ NFR-2.4 要求所有外部呼叫的 timeout 不得超過 10 秒。
     request-timeout: ${SIFT_FETCH_REQUEST_TIMEOUT:10s}
-
-    # 回應大小上限。正常 RSS 約 20–200 KB，5 MB 已經非常寬鬆。
     max-body-bytes: ${SIFT_FETCH_MAX_BODY_BYTES:5242880}
 
-    # 兩次抓取之間的間隔。
-    #
-    # ⚠️ 開發時設 60 秒是為了「改完程式碼等一分鐘就看得到結果」。
-    #    正式環境應該是 3600000（1 小時）或更長——
-    #    每分鐘去敲別人的網站是不禮貌的，而且很可能被封鎖。
-    interval-ms: ${SIFT_FETCH_INTERVAL_MS:60000}
+    # Spring cron has six fields; the first is seconds.
+    cron: ${SIFT_FETCH_CRON:0 0 6 * * *}
 
-    # 啟動後多久跑第一次。
-    #
-    # 不設 0 的理由：應用程式剛啟動時還在建立連線池、跑 migration，
-    # 這時候插進來一輪抓取只會讓啟動變慢、log 變亂。
-    initial-delay-ms: ${SIFT_FETCH_INITIAL_DELAY_MS:10000}
+    # How long before an unfinished job counts as abandoned. Must be well above
+    # any legitimate runtime: too tight and the reaper kills live work.
+    stuck-timeout: ${SIFT_FETCH_STUCK_TIMEOUT:10m}
+    reap-interval-ms: ${SIFT_FETCH_REAP_INTERVAL_MS:300000}
 
-  # ---------------------------------------------------------------
-  # 摘要排程
-  #
-  # 與抓取分開，因為兩者的節奏不同：
-  #   抓取 每小時一次就夠，RSS 不會每分鐘更新
-  #   摘要 抓到之後應該盡快處理，使用者才看得到結果
-  # ---------------------------------------------------------------
+  async:
+    # False swaps the fetch thread pool for a synchronous executor, which is
+    # what makes the integration tests deterministic.
+    enabled: ${SIFT_ASYNC_ENABLED:true}
+
   summarize:
-    # 一輪最多處理幾篇。
-    #
-    # ⚠️ 這個上限不能省。第一次啟動時資料庫裡可能有幾百篇待處理，
-    #    不限制就會一次送出幾百個 LLM 請求——那是幾百次付費，
-    #    而且很可能直接撞到對方的限流。
-    #    做不完沒關係，下一輪繼續。
-    batch-size: ${SIFT_SUMMARIZE_BATCH_SIZE:10}
+    # Whether the fake summarizer is registered at all. Never enable in
+    # production: hiding it from the UI would not stop a direct API call.
+    allow-fake: ${SIFT_SUMMARIZE_ALLOW_FAKE:false}
 
-    # 每個使用者每天最多呼叫幾次 LLM。
-    #
-    # ⚠️ 這是安全閥，不是商業規則（ADR-003）。
-    #
-    # 因為採 BYOK，花的是使用者自己的錢，我們沒有立場限制他用多少。
-    # 但我們有責任確保「我們的程式不會因為一個 bug 幫他把錢燒光」。
-    #
-    # 失控的具體形態：有人把 interval-ms 從 30000 改成 1000，
-    # 一天就是 86 萬次呼叫。上限 200 的意思是「出事時損失有天花板」。
+    gemini:
+      base-url: ${SIFT_GEMINI_URL:https://generativelanguage.googleapis.com/v1beta/interactions}
+      model: ${SIFT_GEMINI_MODEL:gemini-3.8-flash}
+      timeout: ${SIFT_GEMINI_TIMEOUT:30s}
+      max-chars: ${SIFT_GEMINI_MAX_CHARS:6000}
+
+    batch-size: ${SIFT_SUMMARIZE_BATCH_SIZE:5}
     daily-quota: ${SIFT_SUMMARIZE_DAILY_QUOTA:200}
-
-    interval-ms: ${SIFT_SUMMARIZE_INTERVAL_MS:30000}
-
-    # 比抓取晚一點跑，讓第一輪抓取先把東西放進來
+    interval-ms: ${SIFT_SUMMARIZE_INTERVAL_MS:60000}
     initial-delay-ms: ${SIFT_SUMMARIZE_INITIAL_DELAY_MS:20000}
 
-    # -------------------------------------------------------------
-    # 重試（exponential backoff）
-    #
-    # 只有 TRANSIENT 失敗會重試（429 限流、timeout、對方 5xx）。
-    # PERMANENT 失敗（API key 無效、內容為空）重試幾次都一樣。
-    # -------------------------------------------------------------
     retry:
-      # 最多重試幾次。
-      #
-      # 為什麼是 3 不是 10：
-      #   每次重試都花錢
-      #   3 次的總等待是 1+2+4 = 7 分鐘，夠讓大部分的限流恢復
-      #   7 分鐘還不行，大概就不是暫時性問題了
       max-attempts: ${SIFT_SUMMARIZE_MAX_ATTEMPTS:3}
-
-      # 第一次重試前等多久。之後每次翻倍：60s → 120s → 240s
       base-delay: ${SIFT_SUMMARIZE_BASE_DELAY:60s}
-
-      # 抖動比例。0.2 代表在 ±20% 的範圍內隨機。
-      #
-      # 為什麼需要：100 篇同一秒失敗的話，它們的下次重試也會是同一秒——
-      # 尖峰只是往後移，沒有消失（thundering herd）。
+      # Randomises the backoff so a batch of failures does not retry in lockstep.
       jitter-ratio: ${SIFT_SUMMARIZE_JITTER_RATIO:0.2}

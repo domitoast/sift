@@ -24,18 +24,30 @@
 |---|---|
 | 訂閱來源管理 | 新增當下就試抓一次，網址不能用就進不了資料庫 |
 | RSS autodiscovery | 填網站首頁也可以，會自己找出真正的 feed 網址 |
-| 定時抓取 | 每個來源一張工作卡，狀態與失敗原因都留著 |
+| 定時抓取 | 每天 06:00 抓一次（cron），每個來源一張工作卡，狀態與失敗原因都留著 |
+| 非同步抓取 | 手動抓取回 202 + `jobId`，背景執行緒池處理，前端輪詢進度；新增訂閱會自動抓第一輪 |
+| 卡住自動回收 | 超時未結束的抓取任務與摘要，由排程標記為失敗——否則重啟一次就會讓那個來源永遠抓不動 |
 | 去重 | 依內容雜湊判斷，網址帶不同追蹤參數不會被當成新文章 |
 | LLM 摘要 | 使用者自帶 API key（BYOK），加密後存放 |
 | 失敗處理 | 暫時性失敗會 exponential backoff 重試，最多 3 次 |
 | 每日配額 | 防止排程設錯而狂打 API |
+| 收藏 / 丟棄 | 摘要好之後由使用者決定收進知識庫或丟掉，不自動收 |
+
+**前端**（React + Vite）
+
+| 功能 | 說明 |
+|---|---|
+| 訂閱來源管理 | 新增、切換、顯示每個來源的文章數與待讀數 |
+| 文章列表 | 依發布時間排序，顯示狀態與摘要 |
+| 閱讀器 | 分割／全螢幕兩種模式，可調字級、行距、字體、紙色、版面寬度 |
+| 深色 / 亮色 | 用 CSS 變數切換，記在 localStorage |
+| Token 自動續期 | access token 過期時自動用 refresh token 換新的並重送請求 |
 
 ## 還沒做
 
-- **把摘要好的文章收進知識庫**（`fetched_item` → `document` 那一步）
-- 真正的 LLM 供應商串接（目前是一個假的實作，方便測試）
-- 部署
-- 前端
+- 翻譯（英文文章翻成中文）
+- 部署（Docker 多階段建置 + CD）
+- 訂閱項目的排序與分頁還在前端算，資料一多就不準
 
 ---
 
@@ -67,15 +79,38 @@ openssl rand -base64 32
 > 後者外洩代表所有使用者的 API key 變明文——影響範圍不同，
 > 而且輪替其中一把時不該連帶弄壞另一把。
 
-然後：
+然後一個指令把整套叫起來（資料庫 + 後端 + 前端）：
+
+```powershell
+.\scripts\dev.ps1
+```
+
+它會依序：載入 `.env` → 起 Postgres 並等到 healthy → 必要時 `npm install`
+→ 開兩個視窗跑後端與前端 → 等 `/actuator/health` 回 200 才告訴你可以用了。
+
+| | |
+|---|---|
+| 前端 | http://localhost:5173 |
+| 後端 | http://localhost:8080 |
+
+回到腳本的視窗按 Enter 就會停掉前後端（資料庫留著，要停用 `docker compose down`）。
+
+<details>
+<summary>手動啟動（非 Windows，或想知道它實際做了什麼）</summary>
 
 ```bash
-# 2. 起資料庫
+# 1. 起資料庫，等它 healthy
 docker compose up -d
 
-# 3. 跑起來（Flyway 會自動建表）
+# 2. 後端（Flyway 會自動建表）
+#    ⚠️ .env 裡的變數要先進到環境裡——Spring Boot 不會自己讀 .env
+export $(grep -v '^#' .env | xargs)
 ./mvnw spring-boot:run
+
+# 3. 前端（另一個終端機）
+cd web && npm install && npm run dev
 ```
+</details>
 
 確認活著：
 
@@ -83,11 +118,14 @@ docker compose up -d
 curl -i http://localhost:8080/actuator/health
 ```
 
-跑測試（需要資料庫在跑）：
+跑測試（需要 Docker 在跑，不需要先 `docker compose up`）：
 
 ```bash
 ./mvnw test
 ```
+
+測試用的 PostgreSQL 由 Testcontainers 自動啟動，測完自動刪除，
+不會碰到開發用的資料庫。第一次跑會下載 `postgres:17-alpine` 映像檔。
 
 ---
 
@@ -114,7 +152,13 @@ curl -i http://localhost:8080/actuator/health
 | GET | `/sources` | 列出自己的來源 |
 | PATCH | `/sources/{id}` | 改名稱或啟用狀態 |
 | DELETE | `/sources/{id}` | 刪除來源（已抓的文章保留） |
+| POST | `/sources/{id}/fetch` | 排一次抓取。**回 202 + `jobId`**，背景執行 |
+| GET | `/fetch-jobs/{id}` | 那筆任務的進度。前端每 2 秒問一次，直到 `finished` |
 | GET | `/sources/{id}/fetch-jobs` | 該來源最近的抓取結果與失敗原因 |
+| GET | `/sources/{id}/items` | 該來源抓到的文章（列表，不含原文） |
+| GET | `/fetched-items/{id}` | 單篇文章的完整內容（含原文） |
+| POST | `/fetched-items/{id}/promote` | 收進知識庫，回 201 與新建立的 document |
+| POST | `/fetched-items/{id}/discard` | 丟棄（不刪資料，保留「我拒絕過」的紀錄） |
 
 錯誤回應用 RFC 7807 Problem Details：
 
@@ -140,6 +184,8 @@ curl -i http://localhost:8080/actuator/health
 | 資料庫 | PostgreSQL 17 | 需要 partial index 來配合 soft delete，MySQL 沒有（[ADR-007](docs/adr/ADR-007-choose-postgresql.md)） |
 | 資料庫版本管理 | Flyway | 結構變更要能進 Git、能重現 |
 | 認證 | JWT + 資料庫存的 refresh token | 純 JWT 無法登出（[ADR-010](docs/adr/ADR-010-refresh-token-persistence.md)） |
+| LLM | Google Gemini（介面隔離） | `Summarizer` 是介面，換供應商只是多一個實作；測試一律用 fake |
+| 前端 | React + Vite | 與後端同一個 port 部署，開發時用 Vite 的 proxy 避開 CORS |
 
 ---
 
@@ -208,11 +254,18 @@ src/main/java/dev/sift/
 ├── common/        跨領域：全域例外處理、分頁回應格式
 └── config/        Spring 設定
 
+web/                                前端（React + Vite）
+├── src/App.jsx                     主畫面：來源、文章列表、使用者選單
+├── src/Reader.jsx                  閱讀器
+├── src/useFetchJob.js              抓取進度輪詢
+├── src/Avatar.jsx                  頭像（自己畫的 SVG）
+└── src/index.css                   設計系統（CSS 變數、深淺色主題）
+
 .github/workflows/ci.yml            每次 push 自動跑測試
-src/main/resources/db/migration/    Flyway migration（7 份）
-docs/                               設計文件
+src/main/resources/db/migration/    Flyway migration（9 份）
 docs/adr/                           設計決策紀錄（18 份）
-docs/ANNOTATIONS.md                 專案用到的每一個註解
+docs/DATABASE_DESIGN.md             資料表設計
+docs/API_DESIGN.md                  API 設計
 docs/TESTING.md                     怎麼讀這個專案的測試
 ```
 
@@ -220,7 +273,7 @@ docs/TESTING.md                     怎麼讀這個專案的測試
 
 ## 測試
 
-162 個測試，82 個 unit、80 個 integration（真的起 Spring 與資料庫）。
+221 個測試，unit 與 integration 各半（後者真的起 Spring 與 PostgreSQL）。
 每次 push 由 GitHub Actions 自動執行。
 
 整合測試比教科書建議的比例高很多，那是刻意的——
@@ -239,9 +292,14 @@ Hibernate 的 flush 時機），沒有一個是 unit test 抓得到的。
 
 ## 已知問題
 
-- **`fetched_item` 到 `document` 的最後一步還沒做**——摘要好了但收不進知識庫
-- LLM 是假的實作，還沒接真的供應商
-- 測試與開發共用同一個資料庫，還沒改成 Testcontainers
+- 摘要沒有快取「原文沒變就不重算」的機制（目前一篇只會摘要一次，
+  但如果日後加上「重新摘要」就需要）
+- 前端把 access token 放在 `sessionStorage`——XSS 偷得走。
+  正解是 refresh token 放 httpOnly cookie、access token 留在記憶體，
+  需要後端改發 cookie 並處理 CSRF。access token 只有 15 分鐘壽命，
+  暴露窗口有限，但這仍然是一個已知的妥協
+- 摘要沒有手動觸發，抓完之後最多要等 30 秒（排程間隔）才會產生摘要
+- cron 不會補跑：06:00 時應用程式沒開著的話，那一輪就是沒發生
 - 登入沒有防暴力破解
 - 沒有限制 HTTP request body 的大小
 - 有些來源的 `<description>` 本來就不是內文（例如 Hacker News 只給一個留言連結），

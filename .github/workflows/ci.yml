@@ -30,50 +30,37 @@ jobs:
     runs-on: ubuntu-latest
 
     # -------------------------------------------------------------------------
-    # services 與 steps 的差別：
-    #   step    執行一次，做完就結束
-    #   service 整個 job 期間一直開著
+    # 這裡原本有一段 services.postgres（image、env、ports、health-cmd 共 30 行）。
     #
-    # 162 個測試裡有 80 個會真的連資料庫，所以必須是 service。
+    # 【為什麼刪掉】
+    #
+    # Day 22 測試改用 Testcontainers 之後，資料庫由測試自己啟動：
+    # PostgresTestBase 會起一個 postgres:17-alpine 容器，
+    # @ServiceConnection 把隨機 port 的連線資訊注入 Spring。
+    #
+    # 留著 service 的話會變成「兩個 PostgreSQL 同時在跑，其中一個沒人用」，
+    # 而且它的帳密必須跟 application-test.yml 手動保持一致——
+    # 那正是 Testcontainers 要消除的那種「靠人記得同步」的設定。
+    #
+    # 附帶好處：CI 環境與本機環境從此是同一套機制。
+    # 以前是「本機連自己的 Docker，CI 連 service 容器」，兩邊不一樣，
+    # 出問題時得先問「這是環境差異還是真的 bug」。
+    #
+    # ubuntu-latest 的 runner 本身就有 Docker daemon，Testcontainers 直接可用。
     # -------------------------------------------------------------------------
-    services:
-      postgres:
-        image: postgres:17-alpine
-
-        # ⚠️ 這三個值必須與 src/test/resources/application-test.yml 完全一致，
-        #    否則測試連得到資料庫但認證失敗。
-        #
-        #    這是測試專用的假密碼，本來就在版控裡，不是機密。
-        env:
-          POSTGRES_DB: sift
-          POSTGRES_USER: sift
-          POSTGRES_PASSWORD: local_dev_only_change_me
-
-        # 把容器的 5432 對應到 runner 的 5432，
-        # 測試才連得到 jdbc:postgresql://localhost:5432/sift
-        ports:
-          - 5432:5432
-
-        # ⚠️ 容器「啟動」不等於資料庫「準備好」——PostgreSQL 初始化要幾秒。
-        #
-        # 沒有這段，測試會在資料庫還沒好的時候開始跑，
-        # 拿到「連線被拒絕」——而程式其實沒問題。
-        #
-        # 這與 docker-compose.yml 裡的 healthcheck 是同一件事。
-        options: >-
-          --health-cmd "pg_isready -U sift -d sift"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
 
     steps:
       # uses = 用別人寫好的動作。
       # checkout 把 repo 抓到這台機器上——沒有它，機器上連 mvnw 都沒有。
+      #
+      # ⚠️ 版本要寫死（@v5 而不是 @main）。
+      #    寫 @main 的話，別人改了他們的程式碼，你的 CI 會在你什麼都沒動的
+      #    情況下突然壞掉——而且你查不到是誰改的。
       - name: 取得程式碼
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 安裝 Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           # Temurin 是最常用的免費 JDK 發行版
           distribution: temurin

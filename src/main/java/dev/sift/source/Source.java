@@ -14,23 +14,18 @@ import org.hibernate.generator.EventType;
 import java.time.Instant;
 
 /**
- * 一個訂閱來源，對應資料表 {@code source}。
- *
- * <p>使用者訂閱的 RSS / Atom 網址。排程會定期從這裡抓取新文章。
+ * A subscribed feed, owned by one user. Soft-deleted so its articles survive.
  */
 @Entity
 @Table(name = "source")
 public class Source {
-
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /** 擁有者。同 Document，只存 id 不建立 JPA 關聯（ADR-012）。 */
     @Column(name = "user_id", nullable = false)
     private Long userId;
 
-    /** 使用者自己取的名稱，例如「Hacker News」。 */
     @Column(name = "name", nullable = false, length = 200)
     private String name;
 
@@ -41,12 +36,6 @@ public class Source {
     @Column(name = "type", nullable = false, length = 20)
     private SourceType type;
 
-    /**
-     * 是否啟用。停用的來源排程會跳過，但資料保留。
-     *
-     * <p>與 soft delete 的差別：停用是「暫時不抓」，刪除是「不要了」。
-     * 使用者可能只是暫時不想看某個來源。
-     */
     @Column(name = "enabled", nullable = false)
     private boolean enabled = true;
 
@@ -82,6 +71,10 @@ public class Source {
 
     public void markDeleted() {
         this.deletedAt = Instant.now();
+    }
+
+    public Instant getDeletedAt() {
+        return deletedAt;
     }
 
     public Long getId() {

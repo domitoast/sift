@@ -1,4 +1,23 @@
-# Maven 建置產出
+# Personal notes: learning log, working documents, AI assistant config.
+# These are for me, not for anyone reading the repository.
+#
+# Design documents stay tracked on purpose — docs/adr/ and the schema/API
+# design notes explain why the system looks the way it does, which is the
+# part worth publishing.
+CLAUDE.md
+LEARNING_ROADMAP.md
+PROJECT_RULES.md
+DEVELOPMENT_WORKFLOW.md
+docs/ANNOTATIONS.md
+docs/GLOSSARY.md
+docs/PROJECT_STATE.md
+docs/HANDS_OFF_DAY*.md
+docs/REVIEW_DAY*.md
+docs/SYSTEM_OVERVIEW.md
+docs/TODO.md
+docs/LOCAL_SETUP.md
+
+# Maven build output
 target/
 
 # IntelliJ IDEA
@@ -10,35 +29,35 @@ target/
 # VS Code
 .vscode/
 
-# 作業系統產生的檔案
+# OS cruft
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# 日誌
+# Logs
 *.log
 logs/
 
-# 環境變數與機密資料（絕對不可進版控）
+# Secrets. Never commit.
 #
-# ⚠️ 注意 .env.example 是「例外」——它只有假值，
-#    作用是告訴新人需要準備哪些變數，必須進版控。
+# .env.example is the exception: it holds placeholder values only and is
+# what tells a new developer which variables they need.
 .env
 .env.local
 !.env.example
 *.pem
 *.key
 
-# 本機專用的設定覆寫（若日後使用 profile）
+# Local-only overrides
 application-local.yml
 application-local.yaml
 
-# 若日後改用 Gradle
+# Gradle, if it is ever used
 .gradle/
 build/
 
-# 手動測試 API 時用的暫存 payload（curl -d "@xxx.json"）
+# Scratch payloads for manual API testing
 #
-# 這些檔案裡會有真實的 token 與密碼，絕對不可進版控。
-# 需要長期保留的請求範例，請放到 docs/ 並改用假值。
+# They contain real tokens and passwords. Examples worth keeping belong in
+# docs/ with placeholder values.
 /*.json

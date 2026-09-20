@@ -9,15 +9,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/**
- * FeedParser 的 unit test。
- *
- * <p><b>沒有 {@code @SpringBootTest}，也不連任何網站。</b>
- * 每一題的輸入都是寫死在這個檔案裡的字串，
- * 所以結果永遠可預測——Hacker News 掛掉不會讓這些測試變紅。
- */
 class FeedParserTest {
-
     private final FeedParser parser = new FeedParser();
 
     private static final String RSS = """
@@ -42,7 +34,6 @@ class FeedParserTest {
     @Test
     @DisplayName("RSS：兩個 item 解析成兩篇文章，順序不變")
     void parse_rss_shouldReturnArticles() {
-
         List<FetchedArticle> articles = parser.parse(RSS);
 
         assertThat(articles).hasSize(2);
@@ -53,7 +44,6 @@ class FeedParserTest {
     @Test
     @DisplayName("有 pubDate 就轉成 Instant")
     void parse_withPubDate_shouldParseTime() {
-
         FetchedArticle first = parser.parse(RSS).get(0);
 
         assertThat(first.publishedAt()).isEqualTo(Instant.parse("2026-08-28T08:15:00Z"));
@@ -62,11 +52,6 @@ class FeedParserTest {
     @Test
     @DisplayName("★ 沒有 pubDate 是正常情況，不是錯誤——publishedAt 為 null")
     void parse_withoutPubDate_shouldGiveNull() {
-
-        /*
-         * 很多 feed 根本不填發布時間。
-         * 如果這裡設計成「沒有時間就丟例外」，一堆正常的來源會被判定為失敗。
-         */
         FetchedArticle second = parser.parse(RSS).get(1);
 
         assertThat(second.title()).isEqualTo("第二篇文章");
@@ -76,14 +61,6 @@ class FeedParserTest {
     @Test
     @DisplayName("★ Atom 的 <entry> 也能解析——這就是用 Rome 的理由")
     void parse_atom_shouldAlsoWork() {
-
-        /*
-         * 注意這份的標籤跟上面的 RSS 完全不同：
-         *   RSS  <item>  <link>https://...</link>
-         *   Atom <entry> <link href="https://..."/>
-         *
-         * 我們的程式碼一行都沒有為 Atom 寫過，Rome 把差異吸收掉了。
-         */
         String atom = """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <feed xmlns="http://www.w3.org/2005/Atom">
@@ -105,7 +82,6 @@ class FeedParserTest {
     @Test
     @DisplayName("★ RSS 的內文在 <description>")
     void parse_rssDescription_shouldBecomeContent() {
-
         String rss = """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <rss version="2.0">
@@ -126,7 +102,6 @@ class FeedParserTest {
     @Test
     @DisplayName("★ Atom 的內文在 <content>")
     void parse_atomContent_shouldBecomeContent() {
-
         String atom = """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <feed xmlns="http://www.w3.org/2005/Atom">
@@ -145,16 +120,6 @@ class FeedParserTest {
     @Test
     @DisplayName("★★ HTML 標籤要清乾淨——LLM 不該花錢讀那些標籤")
     void parse_htmlContent_shouldBeStripped() {
-
-        /*
-         * feed 的內文幾乎都是 HTML。直接存下來會變成：
-         *   <p>今天發表了新版本，<a href="...">詳見公告</a>。</p>
-         *
-         * 那段東西送去 LLM，模型要花 token 讀那些標籤——而且是付費的 token。
-         *
-         * 注意 XML 裡的 HTML 是跳脫過的（&lt;p&gt;），Rome 解析後會還原成
-         * 真正的標籤字元，所以 jsoup 才有東西可以清。
-         */
         String rss = """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <rss version="2.0">
@@ -177,17 +142,42 @@ class FeedParserTest {
     }
 
     @Test
+    @DisplayName("★★ 多段 HTML 要保留分段——不然三千字會變成一整坨")
+    void parse_multipleParagraphs_shouldKeepBreaks() {
+        String rss = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <rss version="2.0">
+                  <channel>
+                    <title>測試</title>
+                    <item>
+                      <title>有分段的文章</title>
+                      <link>https://example.com/1</link>
+                      <description>&lt;p&gt;第一段。&lt;/p&gt;&lt;p&gt;第二段。&lt;br&gt;同一段的第二行。&lt;/p&gt;</description>
+                    </item>
+                  </channel>
+                </rss>
+                """;
+
+        String content = parser.parse(rss).get(0).content();
+
+        assertThat(content).contains("第一段。\n\n第二段。");
+
+        assertThat(content).contains("第二段。\n同一段的第二行。");
+
+        assertThat(content).doesNotContain("<");
+
+        assertThat(content).doesNotContain("\n\n\n");
+    }
+
+    @Test
     @DisplayName("★ 沒有內文是正常的，content 為 null 而不是爆掉")
     void parse_withoutContent_shouldGiveNull() {
-
-        // RSS 常數裡的第二篇沒有 description
         assertThat(parser.parse(RSS).get(1).content()).isNull();
     }
 
     @Test
     @DisplayName("★ 沒有 link 的項目會被略過")
     void parse_itemWithoutLink_shouldBeSkipped() {
-
         String rss = """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <rss version="2.0">
@@ -213,13 +203,6 @@ class FeedParserTest {
     @Test
     @DisplayName("★ 拿到 HTML 首頁而不是 feed → FeedParseException")
     void parse_html_shouldThrow() {
-
-        /*
-         * 這是最常見的失敗：使用者填了網站首頁的網址，不是 feed 的網址。
-         *
-         * Day 16 的 RSS autodiscovery 要處理的就是這個情況——
-         * 拿到 HTML 之後，去它的 <head> 裡找真正的 feed 網址。
-         */
         String html = "<html><head><title>某個網站</title></head><body>歡迎</body></html>";
 
         assertThatThrownBy(() -> parser.parse(html))
@@ -229,7 +212,6 @@ class FeedParserTest {
     @Test
     @DisplayName("★ 完全不是 XML → FeedParseException，而不是其他奇怪的例外")
     void parse_garbage_shouldThrow() {
-
         assertThatThrownBy(() -> parser.parse("這根本不是 XML"))
                 .isInstanceOf(FeedParseException.class);
     }
@@ -237,21 +219,6 @@ class FeedParserTest {
     @Test
     @DisplayName("★★ 帶 DOCTYPE 的 feed 一律拒絕（XXE）")
     void parse_withDoctype_shouldThrow() {
-
-        /*
-         * 攻擊情境：
-         *   1. 攻擊者自己架一個網站，網址是 https://evil.example.com/rss
-         *   2. 他把這個網址加成訂閱來源——它是 https 開頭，通過 Day 13 的檢查
-         *   3. 排程去抓，拿回下面這段「feed」
-         *   4. 如果解析器允許 DOCTYPE，&xxe; 會被替換成
-         *      伺服器上 /etc/passwd 的內容
-         *   5. 那段內容變成文章標題，存進資料庫，攻擊者回來讀自己的知識庫
-         *
-         * 這叫 XXE（XML External Entity）。
-         *
-         * 這個測試存在的意義：如果哪天有人把 setAllowDoctypes 改成 true，
-         * 或換掉解析函式庫，這一題會紅。
-         */
         String malicious = """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <!DOCTYPE rss [

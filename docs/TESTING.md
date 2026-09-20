@@ -341,8 +341,47 @@ mockMvc.perform(get("/api/v1/sources") ...)
 
 **Q：整合測試寫進資料庫的資料會留下來嗎？**
 
-不會。整合測試都有 `@Transactional`，每題結束自動回滾。
+不會，而且有兩層保護：
 
-> ⚠️ 但這也代表**測試不能假設資料庫是空的**——
-> 開發時手動塞的資料還在。Day 8 就因為這個踩過一次，
-> 所以每個斷言都要限定在測試自己建立的資料上。
+| | 做什麼 |
+|---|---|
+| `@Transactional` | 每一題結束自動回滾 |
+| Testcontainers | 整批測試結束，整個資料庫容器被砍掉 |
+
+第二層是 Day 22 加的。在那之前測試連的是 `localhost:5432/sift`，
+**跟開發是同一個資料庫**，所以 `FetchedItemDedupTest` 這種
+刻意不回滾的測試（它要驗的是真實的唯一約束衝突），
+留下的假資料會一直躺在開發資料表裡。
+
+**Q：測試用的資料庫從哪裡來？**
+
+`src/test/java/dev/sift/support/PostgresTestBase.java`：
+
+```java
+@ServiceConnection
+protected static final PostgreSQLContainer<?> POSTGRES =
+        new PostgreSQLContainer<>("postgres:17-alpine");
+
+static { POSTGRES.start(); }
+```
+
+整合測試 `extends PostgresTestBase` 就會用到它。
+
+跑測試時會自動起一個乾淨的 PostgreSQL 容器，Flyway 在上面跑完 V1～V7，
+測完容器連同資料一起消失。**所以測試可以假設資料庫是空的。**
+
+`@ServiceConnection` 負責把容器的隨機 port 連線資訊注入 Spring——
+`application-test.yml` 裡因此完全沒有 `datasource` 設定。
+
+> ⚠️ 這代表**跑測試需要 Docker 在跑**。沒開的話測試會直接失敗，
+> 這是刻意的：舊設定留著當備援的話，`@ServiceConnection` 哪天失效，
+> 測試會安靜地改連開發資料庫，而且照樣是綠的。
+
+**Q：第一次跑特別慢？**
+
+第一次要下載 `postgres:17-alpine` 映像檔（約 100 MB）。
+之後每次多 5～10 秒（起容器 + 等 health check）。
+
+容器是 **singleton**——整個 JVM 只起一個，7 個整合測試類別共用。
+用標準的 `@Testcontainers` + `@Container` 寫法會變成每個類別起一次，
+那是多 35 秒而不是 5 秒。

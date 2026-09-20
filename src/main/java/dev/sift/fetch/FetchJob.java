@@ -14,26 +14,19 @@ import org.hibernate.generator.EventType;
 import java.time.Instant;
 
 /**
- * 一次抓取任務，對應資料表 {@code fetch_job}。
+ * One fetch attempt, as a state machine: PENDING -> RUNNING -> SUCCESS | FAILED.
  *
- * <p>「排程觸發一次、對一個 source 抓一次」＝ 一筆紀錄。
- *
- * <p><b>沒有 setStatus()，是刻意的。</b>
- * 狀態只能透過 {@link #start()}、{@link #succeed()}、{@link #fail} 改變，
- * 每個方法自己檢查來源狀態合不合法，並同時更新該轉換必須更新的欄位。
- *
- * <p>這樣「換了狀態卻忘記記時間」就變成做不到的事，
- * 而不是「要記得做」的事。
+ * There is no status setter on purpose. Each transition method validates the
+ * current state and updates every field that transition implies, so "changed the
+ * status but forgot the timestamp" is not expressible.
  */
 @Entity
 @Table(name = "fetch_job")
 public class FetchJob {
-
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /** 抓哪一個來源。只存 id，不建立 JPA 關聯（ADR-012）。 */
     @Column(name = "source_id", nullable = false)
     private Long sourceId;
 
@@ -41,11 +34,9 @@ public class FetchJob {
     @Column(name = "status", nullable = false, length = 20)
     private FetchStatus status = FetchStatus.PENDING;
 
-    /** 開始抓的時間。PENDING 期間是 null。 */
     @Column(name = "started_at")
     private Instant startedAt;
 
-    /** 結束（成功或失敗）的時間。 */
     @Column(name = "finished_at")
     private Instant finishedAt;
 
@@ -56,6 +47,9 @@ public class FetchJob {
     @Column(name = "failure_reason")
     private String failureReason;
 
+    @Column(name = "new_item_count", nullable = false)
+    private int newItemCount = 0;
+
     @Column(name = "created_at", insertable = false, updatable = false)
     @Generated(event = EventType.INSERT)
     private Instant createdAt;
@@ -64,7 +58,6 @@ public class FetchJob {
     @Generated(event = {EventType.INSERT, EventType.UPDATE})
     private Instant updatedAt;
 
-    /** JPA 需要一個無參數建構子，但不希望外部呼叫，所以設 protected。 */
     protected FetchJob() {
     }
 
@@ -73,11 +66,6 @@ public class FetchJob {
         this.status = FetchStatus.PENDING;
     }
 
-    /**
-     * 開始抓取：PENDING → RUNNING。
-     *
-     * @throws IllegalFetchJobTransitionException 目前不是 PENDING
-     */
     public void start() {
         requireStatus(FetchStatus.PENDING, FetchStatus.RUNNING);
 
@@ -85,28 +73,18 @@ public class FetchJob {
         this.startedAt = Instant.now();
     }
 
-    /**
-     * 抓取成功：RUNNING → SUCCESS。
-     *
-     * @throws IllegalFetchJobTransitionException 目前不是 RUNNING
-     */
-    public void succeed() {
+    public void succeed(int newItemCount) {
         requireStatus(FetchStatus.RUNNING, FetchStatus.SUCCESS);
 
         this.status = FetchStatus.SUCCESS;
         this.finishedAt = Instant.now();
+        this.newItemCount = newItemCount;
     }
 
-    /**
-     * 抓取失敗：RUNNING → FAILED。
-     *
-     * <p>失敗一定要說明原因——資料庫的 {@code ck_fetch_job_failure_reason}
-     * 也強制了這件事。沒有原因的失敗紀錄沒有診斷價值。
-     *
-     * @throws IllegalFetchJobTransitionException 目前不是 RUNNING
-     */
     public void fail(FailureType failureType, String reason) {
-        requireStatus(FetchStatus.RUNNING, FetchStatus.FAILED);
+        if (isFinished()) {
+            throw new IllegalFetchJobTransitionException(this.status, FetchStatus.FAILED);
+        }
 
         this.status = FetchStatus.FAILED;
         this.finishedAt = Instant.now();
@@ -114,7 +92,6 @@ public class FetchJob {
         this.failureReason = reason;
     }
 
-    /** 是否已經結束（不論成功或失敗）。 */
     public boolean isFinished() {
         return status == FetchStatus.SUCCESS || status == FetchStatus.FAILED;
     }
@@ -155,5 +132,9 @@ public class FetchJob {
 
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    public int getNewItemCount() {
+        return newItemCount;
     }
 }

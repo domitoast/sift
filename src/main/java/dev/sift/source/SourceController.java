@@ -22,12 +22,11 @@ import java.net.URI;
 import java.util.List;
 
 /**
- * 訂閱來源的 HTTP 入口。
+ * Subscription management and manual fetch triggering.
  */
 @RestController
 @RequestMapping("/api/v1/sources")
 public class SourceController {
-
     private final SourceService sourceService;
 
     public SourceController(SourceService sourceService) {
@@ -38,7 +37,6 @@ public class SourceController {
     public ResponseEntity<SourceResponse> create(
             @AuthenticationPrincipal Long userId,
             @Valid @RequestBody CreateSourceRequest request) {
-
         SourceResponse response = sourceService.create(userId, request);
 
         return ResponseEntity
@@ -46,60 +44,24 @@ public class SourceController {
                 .body(response);
     }
 
-    /**
-     * 列出自己的訂閱來源。
-     *
-     * <p>沒有分頁——來源是手動一個一個加的，幾十個就算多。
-     */
     @GetMapping
     public List<SourceResponse> list(@AuthenticationPrincipal Long userId) {
         return sourceService.findAll(userId);
     }
 
-    /**
-     * 修改名稱或啟用狀態。
-     *
-     * <p>用 {@code PATCH} 而非 {@code PUT}：這裡是「只改我有給的欄位」，
-     * 沒給的維持原樣。文件編輯用 {@code PUT}，因為那是整篇取代。
-     */
     @PatchMapping("/{id}")
     public SourceResponse update(
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id,
             @Valid @RequestBody UpdateSourceRequest request) {
-
         return sourceService.update(userId, id, request);
     }
 
-    /**
-     * 這個來源最近幾次的抓取結果（FR-2.4）。
-     *
-     * <p>使用者靠這支 API 知道「我的訂閱是不是壞了」。
-     * 沒有它，一個 PERMANENT 失敗的來源會安靜地永遠沒有新文章，
-     * 而使用者不會知道原因。
-     *
-     * <p>路徑是 {@code /sources/{id}/fetch-jobs} 而不是
-     * {@code /fetch-jobs?sourceId=x}——抓取紀錄不會獨立存在，
-     * 它一定屬於某個來源。<b>從屬關係用路徑表達，篩選條件才用查詢字串。</b>
-     *
-     * @param limit 最多回幾筆。預設 10，超出 1–50 的範圍會被夾回範圍內
-     */
     @GetMapping("/{id}/fetch-jobs")
     public List<FetchJobResponse> fetchJobs(
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id,
             @RequestParam(defaultValue = "10") int limit) {
-
-        /*
-         * 上限一定要有：沒有它，任何人送 ?limit=999999999 就等於要求全部。
-         * 這與 application.yml 的 max-page-size: 100 是同一個道理。
-         *
-         * 選擇「夾回範圍」而不是「回 400」，是為了和分頁的行為一致——
-         * Spring 的 max-page-size 也是靜靜夾住，不報錯。
-         *
-         * Math.clamp 是 Java 21 的新方法，等同
-         * Math.min(50, Math.max(1, limit))，但讀起來清楚很多。
-         */
         return sourceService.findFetchJobs(userId, id, Math.clamp(limit, 1, 50));
     }
 
@@ -107,29 +69,31 @@ public class SourceController {
     public ResponseEntity<Void> delete(
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id) {
-
         sourceService.delete(userId, id);
 
         return ResponseEntity.noContent().build();
     }
 
-    /**
-     * 這個來源抓到的文章，新的在前。
-     *
-     * <p>管線的成果在這裡才第一次對外可見——
-     * 在此之前，抓下來的文章與摘要只存在資料庫裡，沒有任何 API 讀得到。
-     *
-     * <p>回傳不含 {@code rawContent}：那可能好幾 KB，
-     * 而列表上根本顯示不了。想看全文就點 {@code externalUrl} 去看原文。
-     *
-     * @param limit 最多回幾筆。預設 10，超出 1–50 會被夾回範圍內
-     */
+    @PostMapping("/{id}/fetch")
+    public ResponseEntity<FetchNowResponse> fetchNow(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long id) {
+        Long jobId = sourceService.fetchNow(userId, id);
+
+        return ResponseEntity
+                .accepted()
+                .location(URI.create("/api/v1/fetch-jobs/" + jobId))
+                .body(new FetchNowResponse(jobId));
+    }
+
+    public record FetchNowResponse(Long jobId) {
+    }
+
     @GetMapping("/{id}/items")
     public List<FetchedItemResponse> items(
             @AuthenticationPrincipal Long userId,
             @PathVariable Long id,
             @RequestParam(defaultValue = "10") int limit) {
-
         return sourceService.findItems(userId, id, Math.clamp(limit, 1, 50));
     }
 }

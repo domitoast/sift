@@ -1,86 +1,47 @@
-# =============================================================================
-# 測試專用設定（profile: test）
+# Test profile. Only lists what differs from application.yml.
 #
-# 【為什麼檔名是 application-test.yml 而不是 application.yml】
-#
-# 兩個檔案若都叫 application.yml，classpath 上只會找到「第一個」——
-# 而 test-classes 排在 classes 之前，因此 src/main 的那份「完全不會被載入」。
-#
-# 那不是覆蓋，是「遮蔽」。結果是測試環境與正式環境跑在兩套不同的設定上，
-# 而且沒有任何警告。
-#
-# 這個問題在 Day 9 被一個測試抓到：
-# 主設定寫了 max-page-size: 100，但測試量到的是 Spring 預設的 2000。
-#
-# 改名為 application-test.yml 並搭配 @ActiveProfiles("test") 之後，
-# Spring 會「先載入 application.yml，再用這份疊上去」——
-# 也就是真正的覆蓋。這份檔案因此只需要列出「與正式環境不同」的部分。
-#
-# ⚠️ 這裡的值是測試專用的假值，可以安全進版控。絕不可放真實金鑰。
-# =============================================================================
+# There is deliberately no datasource block: PostgresTestBase supplies the
+# connection through Testcontainers. Leaving a fallback here would let the
+# suite quietly pollute the development database if that wiring ever broke.
 
 spring:
-  datasource:
-    # 測試目前仍連本機 Docker 的 PostgreSQL。
-    # ⚠️ 已知技術債：測試依賴外部環境。Day 18 改用 Testcontainers。
-    url: jdbc:postgresql://localhost:5432/sift
-    username: sift
-    password: local_dev_only_change_me
-
   jpa:
-    # 測試時不印 SQL，否則輸出會被淹沒。
-    #
-    # 其餘 JPA 設定（ddl-auto、open-in-view）刻意「不」重寫，
-    # 直接沿用 application.yml——設定不一致的測試，測不到真實行為。
     show-sql: false
 
 sift:
   jwt:
-    # 測試專用的假金鑰。長度仍需符合 HS512 要求（至少 512 bits）。
+    # Fake key, safe to commit. Still long enough for HS512.
     secret: dGVzdC1vbmx5LXNlY3JldC1rZXktZm9yLXVuaXQtdGVzdHMtbm90LWZvci1wcm9kdWN0aW9uLXVzZS1hdC1hbGwtcGFkZGluZw==
 
   encryption:
-    # 測試專用的假金鑰。Base64 解碼後正好 32 bytes（256 bits）——
-    # 解碼出來是 "sift-test-encryption-key-32bytes"。
-    #
-    # ⚠️ 這是公開在版控裡的值，絕不可用於正式環境。
+    # Fake key, safe to commit. Decodes to exactly 32 bytes.
     secret: c2lmdC10ZXN0LWVuY3J5cHRpb24ta2V5LTMyYnl0ZXM=
 
   scheduling:
-    # ⚠️ 測試時一定要關掉排程。
-    #
-    # 不關的話，跑 mvnw test 的過程中排程會啟動，
-    # 然後真的對外網發出 HTTP 請求：
-    #   - 測試變慢（每次要等別人的伺服器回應）
-    #   - 測試變得不穩定（別人的網站掛掉，我們的 CI 就紅）
-    #   - 對別人的伺服器不禮貌
-    #
-    # 而 refresh token 清除排程若在測試中途執行，
-    # 會刪掉測試自己建立的資料，造成難以重現的失敗。
-    #
-    # SchedulingConfig 上的 @ConditionalOnProperty 讀的就是這個值。
+    # Scheduled tasks would reach the real network mid-test.
     enabled: false
 
   fetch:
-    # ⚠️ 只有測試環境可以是 true。
-    #
-    # FetchClientTest 會在 localhost 架一個假的 HTTP 伺服器，
-    # 而 localhost 解析出來是 127.0.0.1——正是正式環境要擋的東西。
-    #
-    # 「內部位址的判斷邏輯」本身由 InternalAddressCheckerTest 獨立驗證，
-    # 不受這個設定影響。
+    # The test HTTP server runs on localhost, which is what SSRF protection blocks.
     allow-internal-address: true
-
-    # 測試用的短 timeout：驗證一個 timeout 不必真的等 10 秒。
     connect-timeout: 2s
     request-timeout: 2s
-
-    # 測試用的小上限：產生 1 KB 的假回應比產生 5 MB 快得多。
     max-body-bytes: 1024
+    # Long enough that live work is never reaped, short enough that a row
+    # backdated by the test is.
+    stuck-timeout: 30s
+
+  async:
+    # Synchronous executor: the background work is done by the time the
+    # response returns, so assertions need no sleeps.
+    enabled: false
 
   summarize:
-    # 測試用的小配額：驗證「額度用完會被擋」不需要真的呼叫 200 次。
+    allow-fake: true
     daily-quota: 3
+    # Must stay below daily-quota, otherwise the quota masks the batch limit
+    # and the batching behaviour is never actually exercised.
+    batch-size: 2
 
 logging:
   level:
