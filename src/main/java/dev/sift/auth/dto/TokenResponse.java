@@ -1,17 +1,17 @@
 package dev.sift.auth.dto;
 
 /**
- * A freshly issued access + refresh token pair.
+ * A freshly issued access token.
+ *
+ * The refresh token is deliberately absent: it is sent as an HttpOnly cookie
+ * so that page scripts never see it.
  */
 public record TokenResponse(
         String accessToken,
-        String refreshToken,
         String tokenType,
         long expiresInSeconds
 ) {
-    public static TokenResponse bearer(String accessToken,
-                                       String refreshToken,
-                                       long expiresInSeconds) {
-        return new TokenResponse(accessToken, refreshToken, "Bearer", expiresInSeconds);
+    public static TokenResponse bearer(String accessToken, long expiresInSeconds) {
+        return new TokenResponse(accessToken, "Bearer", expiresInSeconds);
     }
 }

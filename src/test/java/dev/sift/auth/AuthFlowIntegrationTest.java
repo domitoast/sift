@@ -5,17 +5,21 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.ResultMatcher;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
@@ -64,20 +68,39 @@ class AuthFlowIntegrationTest extends PostgresTestBase {
     }
 
     @Test
-    @DisplayName("登入成功會同時回傳 access token 與 refresh token")
-    void login_shouldReturnBothTokens() throws Exception {
-        JsonNode body = login();
+    @DisplayName("登入：access token 放在 body，refresh token 只放在 cookie")
+    void login_shouldReturnAccessTokenInBodyAndRefreshTokenInCookie() throws Exception {
+        MvcResult result = login();
+        JsonNode body = body(result);
 
         assertThat(body.get("accessToken").asText()).isNotBlank();
-        assertThat(body.get("refreshToken").asText()).isNotBlank();
         assertThat(body.get("tokenType").asText()).isEqualTo("Bearer");
         assertThat(body.get("expiresInSeconds").asLong()).isPositive();
+        assertThat(body.has("refreshToken"))
+                .as("refresh token 不能出現在 body，否則頁面上的 JavaScript 讀得到")
+                .isFalse();
+
+        assertThat(refreshCookie(result)).isNotBlank();
+    }
+
+    @Test
+    @DisplayName("★ refresh cookie 必須是 HttpOnly、Secure、SameSite=Strict，且只送往 /api/v1/auth")
+    void login_refreshCookieShouldBeLockedDown() throws Exception {
+        String setCookie = login().getResponse().getHeader(HttpHeaders.SET_COOKIE);
+
+        assertThat(setCookie)
+                .startsWith(RefreshCookie.NAME + "=")
+                .contains("HttpOnly")
+                .contains("Secure")
+                .contains("SameSite=Strict")
+                .contains("Path=/api/v1/auth")
+                .contains("Max-Age=" + 7 * 24 * 60 * 60);
     }
 
     @Test
     @DisplayName("資料庫存的是 refresh token 的雜湊，不是 token 本身")
     void login_shouldPersistHashNotRawToken() throws Exception {
-        String rawToken = login().get("refreshToken").asText();
+        String rawToken = refreshCookie(login());
 
         List<RefreshToken> stored = refreshTokenRepository.findAllByUserId(userId);
 
@@ -94,7 +117,7 @@ class AuthFlowIntegrationTest extends PostgresTestBase {
     @Test
     @DisplayName("帶有效 access token 可以讀取 /me")
     void me_withValidToken_shouldReturnUserData() throws Exception {
-        String accessToken = login().get("accessToken").asText();
+        String accessToken = body(login()).get("accessToken").asText();
 
         mockMvc.perform(get("/api/v1/me")
                         .header("Authorization", "Bearer " + accessToken))
@@ -119,23 +142,24 @@ class AuthFlowIntegrationTest extends PostgresTestBase {
     }
 
     @Test
-    @DisplayName("換發會同時給出新的 access token 與新的 refresh token")
+    @DisplayName("換發會同時給出新的 access token 與新的 refresh cookie")
     void refresh_shouldIssueNewPair() throws Exception {
-        JsonNode first = login();
-        String oldRefresh = first.get("refreshToken").asText();
+        String oldRefresh = refreshCookie(login());
 
-        JsonNode refreshed = refresh(oldRefresh, status().isOk());
+        MvcResult refreshed = refresh(oldRefresh, status().isOk());
 
-        assertThat(refreshed.get("accessToken").asText()).isNotBlank();
-        assertThat(refreshed.get("refreshToken").asText())
+        assertThat(body(refreshed).get("accessToken").asText()).isNotBlank();
+        assertThat(body(refreshed).has("refreshToken")).isFalse();
+        assertThat(refreshCookie(refreshed))
                 .as("rotation：refresh token 也要換一張新的")
+                .isNotBlank()
                 .isNotEqualTo(oldRefresh);
     }
 
     @Test
     @DisplayName("換發後舊的雜湊會被移到 previous_token_hash，且仍然只有一列")
     void refresh_shouldRotateInPlace() throws Exception {
-        String oldRefresh = login().get("refreshToken").asText();
+        String oldRefresh = refreshCookie(login());
         String oldHash = refreshTokenRepository.findAllByUserId(userId).getFirst().getTokenHash();
 
         refresh(oldRefresh, status().isOk());
@@ -152,7 +176,7 @@ class AuthFlowIntegrationTest extends PostgresTestBase {
     @Test
     @DisplayName("★ 已經換發過的 refresh token 再次被使用 → 判定盜用，該使用者所有憑證全部作廢")
     void refresh_withAlreadyUsedToken_shouldDetectReuseAndRevokeAll() throws Exception {
-        String stolenToken = login().get("refreshToken").asText();
+        String stolenToken = refreshCookie(login());
 
         refresh(stolenToken, status().isOk());
 
@@ -172,11 +196,26 @@ class AuthFlowIntegrationTest extends PostgresTestBase {
     }
 
     @Test
-    @DisplayName("登出後，該 refresh token 不能再換發")
-    void logout_shouldInvalidateRefreshToken() throws Exception {
-        String refreshToken = login().get("refreshToken").asText();
+    @DisplayName("沒帶 cookie 就換發（例如從沒登入過）會被拒絕，而不是 400 或 500")
+    void refresh_withoutCookie_shouldReturnUnauthorized() throws Exception {
+        refresh(null, status().isUnauthorized());
+    }
 
-        logout(refreshToken).andExpect(status().isNoContent());
+    @Test
+    @DisplayName("登出後，該 refresh token 不能再換發，而且 cookie 會被清掉")
+    void logout_shouldInvalidateRefreshTokenAndClearCookie() throws Exception {
+        String refreshToken = refreshCookie(login());
+
+        String setCookie = logout(refreshToken)
+                .andExpect(status().isNoContent())
+                .andReturn()
+                .getResponse()
+                .getHeader(HttpHeaders.SET_COOKIE);
+
+        assertThat(setCookie)
+                .startsWith(RefreshCookie.NAME + "=;")
+                .contains("Max-Age=0")
+                .contains("Path=/api/v1/auth");
 
         refresh(refreshToken, status().isUnauthorized());
     }
@@ -184,46 +223,48 @@ class AuthFlowIntegrationTest extends PostgresTestBase {
     @Test
     @DisplayName("重複登出仍然回 204——登出是 idempotent 的")
     void logout_shouldBeIdempotent() throws Exception {
-        String refreshToken = login().get("refreshToken").asText();
+        String refreshToken = refreshCookie(login());
 
         logout(refreshToken).andExpect(status().isNoContent());
         logout(refreshToken).andExpect(status().isNoContent());
         logout("never-existed").andExpect(status().isNoContent());
+        logout(null).andExpect(status().isNoContent());
     }
 
-    private JsonNode login() throws Exception {
-        String body = mockMvc.perform(post("/api/v1/auth/login")
+    private MvcResult login() throws Exception {
+        return mockMvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"email":"%s","password":"%s"}
                                 """.formatted(EMAIL, PASSWORD)))
                 .andExpect(status().isOk())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
-
-        return objectMapper.readTree(body);
+                .andReturn();
     }
 
-    private JsonNode refresh(String refreshToken, ResultMatcher expected) throws Exception {
-        String body = mockMvc.perform(post("/api/v1/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"refreshToken":"%s"}
-                                """.formatted(refreshToken)))
+    private MvcResult refresh(String refreshToken, ResultMatcher expected) throws Exception {
+        return mockMvc.perform(withRefreshCookie(post("/api/v1/auth/refresh"), refreshToken))
                 .andExpect(expected)
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
-
-        return objectMapper.readTree(body);
+                .andReturn();
     }
 
     private ResultActions logout(String refreshToken) throws Exception {
-        return mockMvc.perform(post("/api/v1/auth/logout")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                        {"refreshToken":"%s"}
-                        """.formatted(refreshToken)));
+        return mockMvc.perform(withRefreshCookie(post("/api/v1/auth/logout"), refreshToken));
+    }
+
+    private static MockHttpServletRequestBuilder withRefreshCookie(
+            MockHttpServletRequestBuilder request, String refreshToken) {
+        return refreshToken == null
+                ? request
+                : request.cookie(new Cookie(RefreshCookie.NAME, refreshToken));
+    }
+
+    private JsonNode body(MvcResult result) throws Exception {
+        return objectMapper.readTree(result.getResponse().getContentAsString());
+    }
+
+    private static String refreshCookie(MvcResult result) {
+        Cookie cookie = result.getResponse().getCookie(RefreshCookie.NAME);
+        assertThat(cookie).as("回應應該帶有 refresh cookie").isNotNull();
+        return cookie.getValue();
     }
 }

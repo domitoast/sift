@@ -1,8 +1,6 @@
 package dev.sift.auth;
 
 import dev.sift.auth.dto.LoginRequest;
-import dev.sift.auth.dto.RefreshRequest;
-import dev.sift.auth.dto.TokenResponse;
 import dev.sift.config.JwtProperties;
 import dev.sift.user.User;
 import dev.sift.user.UserRepository;
@@ -42,7 +40,7 @@ public class AuthService {
     }
 
     @Transactional
-    public TokenResponse login(LoginRequest request) {
+    public IssuedTokens login(LoginRequest request) {
         User user = userRepository.findByEmailAndDeletedAtIsNull(request.email())
                 .orElseThrow(InvalidCredentialsException::new);
 
@@ -56,12 +54,16 @@ public class AuthService {
 
         log.info("登入成功 userId={}", user.getId());
 
-        return TokenResponse.bearer(accessToken, refreshToken, accessTokenTtlSeconds);
+        return new IssuedTokens(accessToken, refreshToken, accessTokenTtlSeconds);
     }
 
     @Transactional(noRollbackFor = InvalidRefreshTokenException.class)
-    public TokenResponse refresh(RefreshRequest request) {
-        String presentedHash = jwtService.hashRefreshToken(request.refreshToken());
+    public IssuedTokens refresh(String rawRefreshToken) {
+        if (rawRefreshToken == null || rawRefreshToken.isBlank()) {
+            throw new InvalidRefreshTokenException();
+        }
+
+        String presentedHash = jwtService.hashRefreshToken(rawRefreshToken);
 
         RefreshToken stored = refreshTokenRepository.findByTokenHash(presentedHash)
                 .orElseGet(() -> {
@@ -82,12 +84,17 @@ public class AuthService {
 
         log.info("token 換發成功 userId={}", stored.getUserId());
 
-        return TokenResponse.bearer(accessToken, newRawToken, accessTokenTtlSeconds);
+        return new IssuedTokens(accessToken, newRawToken, accessTokenTtlSeconds);
     }
 
     @Transactional
-    public void logout(RefreshRequest request) {
-        String presentedHash = jwtService.hashRefreshToken(request.refreshToken());
+    public void logout(String rawRefreshToken) {
+        if (rawRefreshToken == null || rawRefreshToken.isBlank()) {
+            log.debug("登出時沒有 refresh token，視為已登出");
+            return;
+        }
+
+        String presentedHash = jwtService.hashRefreshToken(rawRefreshToken);
 
         refreshTokenRepository.findByTokenHash(presentedHash)
                 .filter(RefreshToken::isUsable)

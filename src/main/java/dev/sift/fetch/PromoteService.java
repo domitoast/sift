@@ -40,7 +40,7 @@ public class PromoteService {
 
         Document saved = documentRepository.saveAndFlush(document);
 
-        log.debug("收進知識庫 itemId={} documentId={}", itemId, saved.getId());
+        log.debug("收進收藏庫 itemId={} documentId={}", itemId, saved.getId());
 
         return DocumentResponse.from(saved);
     }

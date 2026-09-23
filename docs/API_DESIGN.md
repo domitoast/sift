@@ -26,7 +26,7 @@
 | Method | 路徑 | 狀態 |
 |---|---|---|
 | POST | `/api/v1/auth/register` | ✅ |
-| POST | `/api/v1/auth/login` | ✅ 回傳 access + refresh 兩張票 |
+| POST | `/api/v1/auth/login` | ✅ body 回 access token；refresh token 以 HttpOnly cookie 發出（ADR-019） |
 | POST | `/api/v1/auth/refresh` | ✅ 含 rotation 與重複使用偵測（ADR-011） |
 | POST | `/api/v1/auth/logout` | ✅ 回 204，且為 idempotent |
 | GET | `/api/v1/me` | ✅ |
@@ -192,9 +192,9 @@ GET /api/v1/documents?page=0&size=20&sort=createdAt,desc
 | Method | 路徑 | 說明 | 成功狀態碼 |
 |---|---|---|---|
 | POST | `/auth/register` | 註冊 | 201 |
-| POST | `/auth/login` | 登入，回傳 access + refresh token | 200 |
-| POST | `/auth/refresh` | 以 refresh token 換發新 access token | 200 |
-| POST | `/auth/logout` | 使 refresh token 失效 | 204 |
+| POST | `/auth/login` | 登入，body 回 access token，refresh token 放 HttpOnly cookie | 200 |
+| POST | `/auth/refresh` | 從 cookie 讀 refresh token，換發新 access token 與新 cookie | 200 |
+| POST | `/auth/logout` | 從 cookie 讀 refresh token 並作廢，同時清掉 cookie | 204 |
 
 **錯誤情境**
 

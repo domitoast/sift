@@ -15,6 +15,7 @@ docs/HANDS_OFF_DAY*.md
 docs/REVIEW_DAY*.md
 docs/SYSTEM_OVERVIEW.md
 docs/TODO.md
+docs/INTERVIEW_QA.md
 docs/LOCAL_SETUP.md
 
 # Maven build output

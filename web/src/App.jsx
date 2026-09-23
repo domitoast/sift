@@ -4,6 +4,9 @@
  * api() is the one function everything goes through. It attaches the access
  * token and, on a 401, refreshes once and replays the request. Exactly once:
  * a loop would turn an expired refresh token into a request storm.
+ *
+ * Token storage is in auth.js: access token in memory, refresh token in an
+ * HttpOnly cookie. On load the page tries a silent refresh to restore the login.
  */
 
 import { useEffect, useState } from 'react'
@@ -13,6 +16,7 @@ import Library from './Library.jsx'
 import FetchProgress from './FetchProgress.jsx'
 import { useFetchJob } from './useFetchJob.js'
 import { PRESET_FEEDS } from './presetFeeds.js'
+import { getAccessToken, refreshAccessToken, setAccessToken } from './auth.js'
 
 function App() {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -32,7 +36,18 @@ function App() {
     localStorage.setItem('sift_theme', theme)
   }, [theme])
 
-  const [token, setToken] = useState(() => sessionStorage.getItem('sift_token') ?? '')
+  // Only drives what is rendered; the token itself lives in auth.js.
+  const [loggedIn, setLoggedIn] = useState(false)
+
+  // True until the silent refresh on load has answered, so the login form
+  // does not flash for someone who is still signed in.
+  const [restoring, setRestoring] = useState(true)
+
+  useEffect(() => {
+    refreshAccessToken()
+      .then((renewed) => setLoggedIn(Boolean(renewed)))
+      .finally(() => setRestoring(false))
+  }, [])
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -76,39 +91,13 @@ function App() {
   })
 
   function saveTokens(data) {
-    sessionStorage.setItem('sift_token', data.accessToken)
-    sessionStorage.setItem('sift_refresh', data.refreshToken)
-    setToken(data.accessToken)
+    setAccessToken(data.accessToken)
+    setLoggedIn(true)
   }
 
   function clearTokens() {
-    sessionStorage.removeItem('sift_token')
-    sessionStorage.removeItem('sift_refresh')
-    setToken('')
-  }
-
-  async function tryRefresh() {
-    const refreshToken = sessionStorage.getItem('sift_refresh')
-
-    if (!refreshToken) {
-      console.warn('[auth] 沒有 refresh token，無法續期')
-      return null
-    }
-
-    const res = await fetch('/api/v1/auth/refresh', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken }),
-    })
-
-    if (!res.ok) {
-      console.warn('[auth] refresh 被拒絕，狀態碼', res.status)
-      return null
-    }
-
-    const data = await res.json()
-    saveTokens(data)
-    return data.accessToken
+    setAccessToken('')
+    setLoggedIn(false)
   }
 
   function request(path, options, accessToken) {
@@ -123,10 +112,10 @@ function App() {
   }
 
   async function api(path, options = {}) {
-    let res = await request(path, options, sessionStorage.getItem('sift_token') ?? '')
+    let res = await request(path, options, getAccessToken())
 
     if (res.status === 401) {
-      const renewed = await tryRefresh()
+      const renewed = await refreshAccessToken()
 
       if (!renewed) {
         clearTokens()
@@ -149,15 +138,11 @@ function App() {
   }
 
   function logout() {
-    const refreshToken = sessionStorage.getItem('sift_refresh')
-
-    if (refreshToken) {
-      fetch('/api/v1/auth/logout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken }),
-      }).catch(() => {})
-    }
+    // The browser attaches the refresh cookie; the server revokes it and clears it.
+    fetch('/api/v1/auth/logout', {
+      method: 'POST',
+      credentials: 'same-origin',
+    }).catch(() => {})
 
     clearTokens()
     setSources([])
@@ -172,6 +157,7 @@ function App() {
 
     const res = await fetch('/api/v1/auth/login', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     })
@@ -206,7 +192,7 @@ function App() {
   }
 
   useEffect(() => {
-    if (!token) return
+    if (!loggedIn) return
 
     api('/sources').then(setSources).catch((e) => say(e.message, true))
 
@@ -225,7 +211,7 @@ function App() {
           if (data.llmProvider) setProvider(data.llmProvider)
         })
         .catch((e) => say(`讀取個人資料失敗：${e.message}`, true))
-  }, [token])
+  }, [loggedIn])
 
   useEffect(() => {
     if (!selectedSourceId) return
@@ -423,14 +409,18 @@ function App() {
       </button>
   )
 
-  if (!token) {
+  if (restoring) {
+    return <div className="shell" />
+  }
+
+  if (!loggedIn) {
     return (
         <div className="shell">
           <div className="auth">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
               <div>
                 <span className="brand">Sift</span>
-                <div className="auth-tagline">把訂閱的文章篩成自己的知識庫</div>
+                <div className="auth-tagline">把訂閱的文章篩成自己的收藏庫</div>
               </div>
               {themeToggle}
             </div>
@@ -557,7 +547,7 @@ function App() {
               className={view === 'library' ? 'tab active' : 'tab'}
               onClick={() => { setView('library'); say('') }}
           >
-            知識庫
+            收藏庫
           </button>
 
           <div style={{ flex: 1 }} />

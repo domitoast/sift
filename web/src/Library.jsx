@@ -58,7 +58,7 @@ export default function Library({ api, onError }) {
 
           <div className="col-head">
             <span>
-              知識庫
+              收藏庫
               {data.totalElements > 0 && <em className="count">{data.totalElements}</em>}
             </span>
           </div>
@@ -84,7 +84,7 @@ export default function Library({ api, onError }) {
 
           {data.content.length === 0 && (
               <div className="empty">
-                {query ? '沒有符合的文件' : '知識庫還是空的'}
+                {query ? '沒有符合的文件' : '收藏庫還是空的'}
                 <span className="empty-hint">
                   {query
                       ? '換個關鍵字試試'
